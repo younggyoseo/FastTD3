@@ -236,3 +236,28 @@ Following the [LeanRL](https://github.com/pytorch-labs/LeanRL)'s recommendation,
    doi={10.1109/LRA.2023.3270034}
 }
 ```
+
+### Getting SAC to Work on a Massive Parallel Simulator
+```bibtex
+@article{raffin2025isaacsim,
+  title   = "Getting SAC to Work on a Massive Parallel Simulator: An RL Journey With Off-Policy Algorithms",
+  author  = "Raffin, Antonin",
+  journal = "araffin.github.io",
+  year    = "2025",
+  month   = "Feb",
+  url     = "https://araffin.github.io/post/sac-massive-sim/"
+}
+```
+
+### Speeding Up SAC with Massively Parallel Simulation
+```bibtex
+@article{shukla2025fastsac,
+  title   = "Speeding Up SAC with Massively Parallel Simulation",
+  author  = "Shukla, Arth",
+  journal = "https://arthshukla.substack.com",
+  year    = "2025",
+  month   = "Mar",
+  url     = "https://arthshukla.substack.com/p/speeding-up-sac-with-massively-parallel"
+}
+```
+
