@@ -77,9 +77,17 @@ def make_env(
 ):
     # Make training environment
     train_env_cfg = registry.get_default_config(env_name)
-    if use_tuned_reward:
+    is_humanoid_task = env_name in [
+        "G1JoystickRoughTerrain",
+        "G1JoystickFlatTerrain",
+        "T1JoystickRoughTerrain",
+        "T1JoystickFlatTerrain",
+    ]
+
+    if use_tuned_reward and is_humanoid_task:
         # NOTE: Tuned reward for G1. Used for producing Figure 7 in the paper.
-        assert env_name in ["G1JoystickRoughTerrain", "G1JoystickFlatTerrain"]
+        # Somehow it works reasonably for T1 as well.
+        # However, see `sim2real.md` for sim-to-real RL with Booster T1
         train_env_cfg.reward_config.scales.energy = -5e-5
         train_env_cfg.reward_config.scales.action_rate = -1e-1
         train_env_cfg.reward_config.scales.torques = -1e-3
@@ -89,13 +97,6 @@ def make_env(
         train_env_cfg.reward_config.scales.feet_phase = 1.0
         train_env_cfg.reward_config.scales.ang_vel_xy = -0.3
         train_env_cfg.reward_config.scales.orientation = -5.0
-
-    is_humanoid_task = env_name in [
-        "G1JoystickRoughTerrain",
-        "G1JoystickFlatTerrain",
-        "T1JoystickRoughTerrain",
-        "T1JoystickFlatTerrain",
-    ]
 
     if is_humanoid_task and not use_push_randomization:
         train_env_cfg.push_config.enable = False
