@@ -193,6 +193,7 @@ def main():
         n_act=n_act,
         n_critic_obs=n_critic_obs,
         asymmetric_obs=envs.asymmetric_obs,
+        playground_mode=env_type == "mujoco_playground",
         n_steps=args.num_steps,
         gamma=args.gamma,
         device=device,
