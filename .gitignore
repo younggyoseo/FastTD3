@@ -1,9 +1,5 @@
-media
 models
 wandb
-figures
-visualize.ipynb
-record.ipynb
 *.pyc
 .ipynb_checkpoints
 fast_td3.egg-info/

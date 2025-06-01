@@ -151,6 +151,9 @@ We would like to thank people who have helped throughout the project:
 - We thank [Kevin Zakka](https://kzakka.com/) for the help in setting up MuJoCo Playground.
 - We thank [Changyeon Kim](https://changyeon.site/) for testing the early version of this codebase
 
+## ❗ Updates
+- **[Jun/1/2025]** We updated the figures in the technical report to report deterministic evaluation for IsaacLab tasks.
+
 ## Citations
 
 ### FastTD3
