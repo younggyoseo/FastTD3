@@ -153,6 +153,7 @@ class SimpleReplayBuffer(nn.Module):
             truncations = torch.gather(self.truncations, 1, indices).reshape(
                 self.n_env * batch_size
             )
+            effective_n_steps = torch.ones_like(dones)
             if self.asymmetric_obs:
                 if self.playground_mode:
                     # Gather privileged observations
@@ -267,6 +268,7 @@ class SimpleReplayBuffer(nn.Module):
             done_masks = torch.cumprod(
                 1.0 - all_dones_shifted, dim=2
             )  # [n_env, batch_size, n_step]
+            effective_n_steps = done_masks.sum(2)
 
             # Create discount factors
             discounts = torch.pow(
@@ -362,6 +364,7 @@ class SimpleReplayBuffer(nn.Module):
             rewards = n_step_rewards.reshape(self.n_env * batch_size)
             dones = final_dones.reshape(self.n_env * batch_size)
             truncations = final_truncations.reshape(self.n_env * batch_size)
+            effective_n_steps = effective_n_steps.reshape(self.n_env * batch_size)
             next_observations = final_next_observations.reshape(
                 self.n_env * batch_size, self.n_obs
             )
@@ -375,6 +378,7 @@ class SimpleReplayBuffer(nn.Module):
                     "dones": dones,
                     "truncations": truncations,
                     "observations": next_observations,
+                    "effective_n_steps": effective_n_steps,
                 },
             },
             batch_size=self.n_env * batch_size,

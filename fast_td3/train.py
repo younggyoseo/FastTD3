@@ -305,6 +305,7 @@ def main():
             next_state_actions = (actor(next_observations) + clipped_noise).clamp(
                 action_low, action_high
             )
+            discount = args.gamma ** data["next"]["effective_n_steps"]
 
             with torch.no_grad():
                 qf1_next_target_projected, qf2_next_target_projected = (
@@ -313,7 +314,7 @@ def main():
                         next_state_actions,
                         rewards,
                         bootstrap,
-                        args.gamma,
+                        discount,
                     )
                 )
                 qf1_next_target_value = qnet_target.get_value(qf1_next_target_projected)
