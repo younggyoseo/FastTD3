@@ -5,13 +5,6 @@ import torch.nn as nn
 
 from tensordict import TensorDict
 
-import os
-
-import torch
-import torch.nn as nn
-
-from tensordict import TensorDict
-
 
 class SimpleReplayBuffer(nn.Module):
     def __init__(
