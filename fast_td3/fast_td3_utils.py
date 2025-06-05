@@ -193,9 +193,11 @@ class SimpleReplayBuffer(nn.Module):
                 )
                 indices = (current_pos + 1 + rand_offset) % self.buffer_size
             else:
+                # Buffer not full - ensure n-step sequence doesn't exceed valid data
+                max_start_idx = max(1, min(self.buffer_size, self.ptr) - self.n_steps + 1)
                 indices = torch.randint(
                     0,
-                    min(self.buffer_size, self.ptr),
+                    max_start_idx,
                     (self.n_env, batch_size),
                     device=self.device,
                 )
