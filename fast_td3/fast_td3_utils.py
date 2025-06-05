@@ -185,7 +185,7 @@ class SimpleReplayBuffer(nn.Module):
                 # Buffer is full - avoid dangerous range around current write position
                 current_pos = self.ptr % self.buffer_size
 
-                # Sample from safe region (everything except [avoid_start, avoid_end])
+                # Sample from safe region
                 # This is not fully uniform sampling, but it's good enough with typical buffer sizes
                 safe_size = self.buffer_size - self.n_steps - 1
                 rand_offset = torch.randint(
