@@ -5,6 +5,13 @@ import torch.nn as nn
 
 from tensordict import TensorDict
 
+import os
+
+import torch
+import torch.nn as nn
+
+from tensordict import TensorDict
+
 
 class SimpleReplayBuffer(nn.Module):
     def __init__(
@@ -179,12 +186,25 @@ class SimpleReplayBuffer(nn.Module):
                     ).reshape(self.n_env * batch_size, self.n_critic_obs)
         else:
             # Sample base indices
-            indices = torch.randint(
-                0,
-                min(self.buffer_size, self.ptr),
-                (self.n_env, batch_size),
-                device=self.device,
-            )
+            if self.ptr >= self.buffer_size:
+                # Avoid sampling across different episodes
+                # Buffer is full - avoid dangerous range around current write position
+                current_pos = self.ptr % self.buffer_size
+
+                # Sample from safe region (everything except [avoid_start, avoid_end])
+                # This is not fully uniform sampling, but it's good enough with typical buffer sizes
+                safe_size = self.buffer_size - self.n_steps - 1
+                rand_offset = torch.randint(
+                    0, safe_size, (self.n_env, batch_size), device=self.device
+                )
+                indices = (current_pos + 1 + rand_offset) % self.buffer_size
+            else:
+                indices = torch.randint(
+                    0,
+                    min(self.buffer_size, self.ptr),
+                    (self.n_env, batch_size),
+                    device=self.device,
+                )
             obs_indices = indices.unsqueeze(-1).expand(-1, -1, self.n_obs)
             act_indices = indices.unsqueeze(-1).expand(-1, -1, self.n_act)
 
@@ -239,10 +259,13 @@ class SimpleReplayBuffer(nn.Module):
                 all_indices,
             )
 
-            # Create masks for rewards after first done
+            # Create masks for rewards *after* first done
             # This creates a cumulative product that zeroes out rewards after the first done
+            all_dones_shifted = torch.cat(
+                [torch.zeros_like(all_dones[:, :, :1]), all_dones[:, :, :-1]], dim=2
+            )  # First reward should not be masked
             done_masks = torch.cumprod(
-                1.0 - all_dones, dim=2
+                1.0 - all_dones_shifted, dim=2
             )  # [n_env, batch_size, n_step]
 
             # Create discount factors
