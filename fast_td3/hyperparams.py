@@ -418,14 +418,14 @@ class IsaacVelocityFlatH1Args(IsaacLabArgs):
 @dataclass
 class IsaacVelocityFlatG1Args(IsaacLabArgs):
     env_name: str = "Isaac-Velocity-Flat-G1-v0"
-    num_steps: int = 3
+    num_steps: int = 8
     total_timesteps: int = 50000
 
 
 @dataclass
 class IsaacVelocityRoughH1Args(IsaacLabArgs):
     env_name: str = "Isaac-Velocity-Rough-H1-v0"
-    num_steps: int = 3
+    num_steps: int = 8
     buffer_size: int = 1024 * 5  # To reduce memory usage
     total_timesteps: int = 50000
 
@@ -433,7 +433,7 @@ class IsaacVelocityRoughH1Args(IsaacLabArgs):
 @dataclass
 class IsaacVelocityRoughG1Args(IsaacLabArgs):
     env_name: str = "Isaac-Velocity-Rough-G1-v0"
-    num_steps: int = 3
+    num_steps: int = 8
     buffer_size: int = 1024 * 5  # To reduce memory usage
     total_timesteps: int = 50000
 
