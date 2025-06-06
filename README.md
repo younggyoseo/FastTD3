@@ -8,6 +8,13 @@ FastTD3 is a high-performance variant of the Twin Delayed Deep Deterministic Pol
 
 For more information, please see our [project webpage](https://younggyo.me/fast_td3)
 
+
+## ❗ Updates
+- **[Jun/6/2025]** We fixed the issues when using `n_steps` > 3, which stabilizes training with n-step return quite a lot!
+
+- **[Jun/1/2025]** We updated the figures in the technical report to report deterministic evaluation for IsaacLab tasks.
+
+
 ## ✨ Features
 
 FastTD3 offers researchers a significant speedup in training complex humanoid agents.
@@ -150,11 +157,6 @@ We would like to thank people who have helped throughout the project:
 
 - We thank [Kevin Zakka](https://kzakka.com/) for the help in setting up MuJoCo Playground.
 - We thank [Changyeon Kim](https://changyeon.site/) for testing the early version of this codebase
-
-## ❗ Updates
-- **[Jun/6/2025]** We fixed the issues when using `n_steps` > 3, which stabilizes training with n-step return quite a lot!
-
-- **[Jun/1/2025]** We updated the figures in the technical report to report deterministic evaluation for IsaacLab tasks.
 
 ## Citations
 
