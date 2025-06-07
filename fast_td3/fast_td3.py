@@ -39,14 +39,17 @@ class DistributionalQNetwork(nn.Module):
         actions: torch.Tensor,
         rewards: torch.Tensor,
         bootstrap: torch.Tensor,
-        gamma: float,
+        discount: float,
         q_support: torch.Tensor,
         device: torch.device,
     ) -> torch.Tensor:
         delta_z = (self.v_max - self.v_min) / (self.num_atoms - 1)
         batch_size = rewards.shape[0]
 
-        target_z = rewards.unsqueeze(1) + bootstrap.unsqueeze(1) * gamma * q_support
+        target_z = (
+            rewards.unsqueeze(1)
+            + bootstrap.unsqueeze(1) * discount.unsqueeze(1) * q_support
+        )
         target_z = target_z.clamp(self.v_min, self.v_max)
         b = (target_z - self.v_min) / delta_z
         l = torch.floor(b).long()
@@ -121,7 +124,7 @@ class Critic(nn.Module):
         actions: torch.Tensor,
         rewards: torch.Tensor,
         bootstrap: torch.Tensor,
-        gamma: float,
+        discount: float,
     ) -> torch.Tensor:
         """Projection operation that includes q_support directly"""
         q1_proj = self.qnet1.projection(
@@ -129,7 +132,7 @@ class Critic(nn.Module):
             actions,
             rewards,
             bootstrap,
-            gamma,
+            discount,
             self.q_support,
             self.q_support.device,
         )
@@ -138,7 +141,7 @@ class Critic(nn.Module):
             actions,
             rewards,
             bootstrap,
-            gamma,
+            discount,
             self.q_support,
             self.q_support.device,
         )
