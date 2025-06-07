@@ -27,6 +27,8 @@ class SimpleReplayBuffer(nn.Module):
         When playground_mode=True, critic_observations are treated as a concatenation of
         regular observations and privileged observations, and only the privileged part is stored
         to save memory.
+
+        TODO (Younggyo): Refactor to split this into SimpleReplayBuffer and NStepReplayBuffer
         """
         super().__init__()
 
@@ -181,21 +183,23 @@ class SimpleReplayBuffer(nn.Module):
         else:
             # Sample base indices
             if self.ptr >= self.buffer_size:
-                # Avoid sampling across different episodes
-                # Buffer is full - avoid dangerous range around current write position
+                # When the buffer is full, there is no protection against sampling across different episodes
+                # We avoid this by temporarily setting self.pos - 1 to truncated = True if not done
+                # https://github.com/DLR-RM/stable-baselines3/blob/b91050ca94f8bce7a0285c91f85da518d5a26223/stable_baselines3/common/buffers.py#L857-L860
+                # TODO (Younggyo): Change the reference when this SB3 branch is merged
                 current_pos = self.ptr % self.buffer_size
-
-                # Sample from safe region
-                # This is not fully uniform sampling, but it's good enough with typical buffer sizes
-                safe_size = self.buffer_size - self.n_steps - 1
-                rand_offset = torch.randint(
-                    0, safe_size, (self.n_env, batch_size), device=self.device
+                curr_truncations = self.truncations[:, current_pos - 1].clone()
+                self.truncations[:, current_pos - 1] = torch.logical_not(self.dones[:, current_pos - 1])
+                indices = torch.randint(
+                    0,
+                    self.buffer_size,
+                    (self.n_env, batch_size),
+                    device=self.device,
                 )
-                indices = (current_pos + 1 + rand_offset) % self.buffer_size
             else:
                 # Buffer not full - ensure n-step sequence doesn't exceed valid data
                 max_start_idx = max(
-                    1, min(self.buffer_size, self.ptr) - self.n_steps + 1
+                    1, self.ptr - self.n_steps + 1
                 )
                 indices = torch.randint(
                     0,
@@ -383,6 +387,10 @@ class SimpleReplayBuffer(nn.Module):
         if self.asymmetric_obs:
             out["critic_observations"] = critic_observations
             out["next"]["critic_observations"] = next_critic_observations
+        
+        if self.ptr >= self.buffer_size:
+            # Roll back the truncation flags introduced for safe sampling
+            self.truncations[:, current_pos - 1] = curr_truncations
         return out
 
 
@@ -430,7 +438,6 @@ class EmpiricalNormalization(nn.Module):
 
     @torch.jit.unused
     def update(self, x):
-        """Learn input values using Welford's online algorithm"""
         if self.until is not None and self.count >= self.until:
             return
 
@@ -444,12 +451,10 @@ class EmpiricalNormalization(nn.Module):
         delta = batch_mean - self._mean
         self._mean += (batch_size / new_count) * delta
 
-        # Update variance using Welford's parallel algorithm
+        # Update variance using Chan's parallel algorithm
+        # https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
         if self.count > 0:  # Ensure we're not dividing by zero
-            # Compute batch variance
             batch_var = torch.mean((x - batch_mean) ** 2, dim=0, keepdim=True)
-
-            # Combine variances using parallel algorithm
             delta2 = batch_mean - self._mean
             m_a = self._var * self.count
             m_b = batch_var * batch_size

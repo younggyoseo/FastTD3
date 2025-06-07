@@ -10,9 +10,9 @@ For more information, please see our [project webpage](https://younggyo.me/fast_
 
 
 ## ❗ Updates
-- **[Jun/6/2025]** We fixed the issues when using `n_steps` > 3, which stabilizes training with n-step return quite a lot!
+- **[Jun/6/2025]** Thanks to [Antonio Araffin](https://araffin.github.io/) ([@araffin](https://github.com/araffin)), we fixed the issues when using `n_steps` > 1, which stabilizes training with n-step return quite a lot!
 
-- **[Jun/1/2025]** We updated the figures in the technical report to report deterministic evaluation for IsaacLab tasks.
+- **[Jun/1/2025]** Updated the figures in the technical report to report deterministic evaluation for IsaacLab tasks.
 
 
 ## ✨ Features
