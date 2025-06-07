@@ -189,7 +189,9 @@ class SimpleReplayBuffer(nn.Module):
                 # TODO (Younggyo): Change the reference when this SB3 branch is merged
                 current_pos = self.ptr % self.buffer_size
                 curr_truncations = self.truncations[:, current_pos - 1].clone()
-                self.truncations[:, current_pos - 1] = torch.logical_not(self.dones[:, current_pos - 1])
+                self.truncations[:, current_pos - 1] = torch.logical_not(
+                    self.dones[:, current_pos - 1]
+                )
                 indices = torch.randint(
                     0,
                     self.buffer_size,
@@ -198,9 +200,7 @@ class SimpleReplayBuffer(nn.Module):
                 )
             else:
                 # Buffer not full - ensure n-step sequence doesn't exceed valid data
-                max_start_idx = max(
-                    1, self.ptr - self.n_steps + 1
-                )
+                max_start_idx = max(1, self.ptr - self.n_steps + 1)
                 indices = torch.randint(
                     0,
                     max_start_idx,
@@ -387,7 +387,7 @@ class SimpleReplayBuffer(nn.Module):
         if self.asymmetric_obs:
             out["critic_observations"] = critic_observations
             out["next"]["critic_observations"] = next_critic_observations
-        
+
         if self.ptr >= self.buffer_size:
             # Roll back the truncation flags introduced for safe sampling
             self.truncations[:, current_pos - 1] = curr_truncations
