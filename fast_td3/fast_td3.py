@@ -124,7 +124,7 @@ class Critic(nn.Module):
         actions: torch.Tensor,
         rewards: torch.Tensor,
         bootstrap: torch.Tensor,
-        gamma: float,
+        discount: float,
     ) -> torch.Tensor:
         """Projection operation that includes q_support directly"""
         q1_proj = self.qnet1.projection(
@@ -132,7 +132,7 @@ class Critic(nn.Module):
             actions,
             rewards,
             bootstrap,
-            gamma,
+            discount,
             self.q_support,
             self.q_support.device,
         )
@@ -141,7 +141,7 @@ class Critic(nn.Module):
             actions,
             rewards,
             bootstrap,
-            gamma,
+            discount,
             self.q_support,
             self.q_support.device,
         )
