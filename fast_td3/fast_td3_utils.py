@@ -388,7 +388,7 @@ class SimpleReplayBuffer(nn.Module):
             out["critic_observations"] = critic_observations
             out["next"]["critic_observations"] = next_critic_observations
 
-        if self.ptr >= self.buffer_size:
+        if self.n_steps > 1 and self.ptr >= self.buffer_size:
             # Roll back the truncation flags introduced for safe sampling
             self.truncations[:, current_pos - 1] = curr_truncations
         return out
