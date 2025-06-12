@@ -20,7 +20,7 @@ class BaseArgs:
     """the rank of the device"""
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
-    project: str = "FastTD3"
+    project: str = "FastSAC"
     """the project name"""
     use_wandb: bool = True
     """whether to use wandb"""
@@ -62,12 +62,6 @@ class BaseArgs:
     """the number of updates to perform per step"""
     init_scale: float = 0.01
     """the scale of the initial parameters"""
-    num_atoms: int = 101
-    """the number of atoms"""
-    v_min: float = -250.0
-    """the minimum value of the support"""
-    v_max: float = 250.0
-    """the maximum value of the support"""
     critic_hidden_dim: int = 1024
     """the hidden dimension of the critic network"""
     actor_hidden_dim: int = 512
@@ -186,8 +180,6 @@ class HumanoidBenchArgs(BaseArgs):
 @dataclass
 class H1HandReachArgs(HumanoidBenchArgs):
     env_name: str = "h1hand-reach-v0"
-    v_min: float = -2000.0
-    v_max: float = 2000.0
 
 
 @dataclass
@@ -217,23 +209,17 @@ class H1HandTruckArgs(HumanoidBenchArgs):
 @dataclass
 class H1HandMazeArgs(HumanoidBenchArgs):
     env_name: str = "h1hand-maze-v0"
-    v_min: float = -1000.0
-    v_max: float = 1000.0
 
 
 @dataclass
 class H1HandPushArgs(HumanoidBenchArgs):
     env_name: str = "h1hand-push-v0"
-    v_min: float = -1000.0
-    v_max: float = 1000.0
     total_timesteps: int = 1000000
 
 
 @dataclass
 class H1HandBasketballArgs(HumanoidBenchArgs):
     env_name: str = "h1hand-basketball-v0"
-    v_min: float = -2000.0
-    v_max: float = 2000.0
     total_timesteps: int = 250000
 
 
@@ -246,22 +232,16 @@ class H1HandWindowArgs(HumanoidBenchArgs):
 @dataclass
 class H1HandPackageArgs(HumanoidBenchArgs):
     env_name: str = "h1hand-package-v0"
-    v_min: float = -10000.0
-    v_max: float = 10000.0
 
 
 @dataclass
 class H1HandTruckArgs(HumanoidBenchArgs):
     env_name: str = "h1hand-truck-v0"
-    v_min: float = -1000.0
-    v_max: float = 1000.0
 
 
 @dataclass
 class MuJoCoPlaygroundArgs(BaseArgs):
     # Default hyperparameters for many of Playground environments
-    v_min: float = -10.0
-    v_max: float = 10.0
     buffer_size: int = 1024 * 10
     num_envs: int = 1024
     num_eval_envs: int = 1024
@@ -310,8 +290,6 @@ class CheetahRunArgs(MuJoCoPlaygroundArgs):
     # Future research can consider using LayerNorm as we find it sometimes works better for DMC tasks.
     env_name: str = "CheetahRun"
     num_steps: int = 3
-    v_min: float = -500.0
-    v_max: float = 500.0
     std_min: float = 0.1
     policy_noise: float = 0.1
 
@@ -351,8 +329,6 @@ class LeapCubeReorientArgs(MuJoCoPlaygroundArgs):
     env_name: str = "LeapCubeReorient"
     num_steps: int = 3
     policy_noise: float = 0.2
-    v_min: float = -50.0
-    v_max: float = 50.0
     use_cdq: bool = False
 
 
@@ -361,21 +337,16 @@ class LeapCubeRotateZAxisArgs(MuJoCoPlaygroundArgs):
     env_name: str = "LeapCubeRotateZAxis"
     num_steps: int = 1
     policy_noise: float = 0.2
-    v_min: float = -10.0
-    v_max: float = 10.0
     use_cdq: bool = False
 
 
 @dataclass
 class IsaacLabArgs(BaseArgs):
-    v_min: float = -10.0
-    v_max: float = 10.0
     buffer_size: int = 1024 * 10
     num_envs: int = 4096
     num_eval_envs: int = 4096
     action_bounds: float = 1.0
     std_max: float = 0.4
-    num_atoms: int = 251
     render_interval: int = 0  # IsaacLab does not support rendering in our codebase
     total_timesteps: int = 100000
 
@@ -387,8 +358,6 @@ class IsaacLiftCubeFrankaArgs(IsaacLabArgs):
     # Higher UTD works better for manipulation tasks
     env_name: str = "Isaac-Lift-Cube-Franka-v0"
     num_updates: int = 8
-    v_min: float = -50.0
-    v_max: float = 50.0
     std_max: float = 0.8
     num_envs: int = 1024
     num_eval_envs: int = 1024
@@ -446,13 +415,9 @@ class IsaacVelocityRoughG1Args(IsaacLabArgs):
 class IsaacReposeCubeAllegroDirectArgs(IsaacLabArgs):
     env_name: str = "Isaac-Repose-Cube-Allegro-Direct-v0"
     total_timesteps: int = 100000
-    v_min: float = -500.0
-    v_max: float = 500.0
 
 
 @dataclass
 class IsaacReposeCubeShadowDirectArgs(IsaacLabArgs):
     env_name: str = "Isaac-Repose-Cube-Shadow-Direct-v0"
     total_timesteps: int = 100000
-    v_min: float = -500.0
-    v_max: float = 500.0

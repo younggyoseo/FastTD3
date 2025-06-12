@@ -2,4 +2,4 @@ models
 wandb
 *.pyc
 .ipynb_checkpoints
-fast_td3.egg-info/
+fast_sac.egg-info/

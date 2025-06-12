@@ -25,9 +25,9 @@ from torch.amp import autocast, GradScaler
 
 from tensordict import TensorDict, from_module
 
-from fast_td3_utils import EmpiricalNormalization, SimpleReplayBuffer, save_params
+from fast_sac_utils import EmpiricalNormalization, SimpleReplayBuffer, save_params
 from hyperparams import get_args
-from fast_td3 import Actor, Critic
+from fast_sac import Actor, Critic
 
 torch.set_float32_matmul_precision("high")
 
@@ -153,23 +153,17 @@ def main():
     )
     # Copy params to actor_detach without grad
     from_module(actor).data.to_module(actor_detach)
-    policy = actor_detach.explore
+    policy = actor_detach.forward
 
     qnet = Critic(
         n_obs=n_critic_obs,
         n_act=n_act,
-        num_atoms=args.num_atoms,
-        v_min=args.v_min,
-        v_max=args.v_max,
         hidden_dim=args.critic_hidden_dim,
         device=device,
     )
     qnet_target = Critic(
         n_obs=n_critic_obs,
         n_act=n_act,
-        num_atoms=args.num_atoms,
-        v_min=args.v_min,
-        v_max=args.v_max,
         hidden_dim=args.critic_hidden_dim,
         device=device,
     )
@@ -186,6 +180,11 @@ def main():
         weight_decay=args.weight_decay,
     )
 
+    target_entropy = -float(n_act)
+    log_alpha = torch.ones(1, requires_grad=True, device=device)
+    log_alpha.data.copy_(torch.tensor([np.log(0.1)], device=device))
+    alpha_optimizer = optim.Adam([log_alpha], lr=args.critic_learning_rate)
+
     rb = SimpleReplayBuffer(
         n_env=args.num_envs,
         buffer_size=args.buffer_size,
@@ -198,9 +197,6 @@ def main():
         gamma=args.gamma,
         device=device,
     )
-
-    policy_noise = args.policy_noise
-    noise_clip = args.noise_clip
 
     def evaluate():
         obs_normalizer.eval()
@@ -220,7 +216,8 @@ def main():
                 device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
             ):
                 obs = normalize_obs(obs)
-                actions = actor(obs)
+                _, _, action_mean = policy(obs)
+                actions = action_mean
 
             next_obs, rewards, dones, _ = eval_envs.step(actions.float())
             episode_returns = torch.where(
@@ -257,7 +254,8 @@ def main():
                 device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
             ):
                 obs = normalize_obs(obs)
-                actions = actor(obs)
+                _, _, action_mean = policy(obs)
+                actions = action_mean
             next_obs, _, done, _ = render_env.step(actions.float())
             if env_type == "mujoco_playground":
                 render_env.state.info["command"] = jnp.array([[1.0, 0.0, 0.0]])
@@ -296,50 +294,27 @@ def main():
                 bootstrap = (~dones).float()
             else:
                 bootstrap = (truncations | ~dones).float()
-
-            clipped_noise = torch.randn_like(actions)
-            clipped_noise = clipped_noise.mul(policy_noise).clamp(
-                -noise_clip, noise_clip
-            )
-
-            next_state_actions = (actor(next_observations) + clipped_noise).clamp(
-                action_low, action_high
-            )
             discount = args.gamma ** data["next"]["effective_n_steps"]
 
             with torch.no_grad():
-                qf1_next_target_projected, qf2_next_target_projected = (
-                    qnet_target.projection(
-                        next_critic_observations,
-                        next_state_actions,
-                        rewards,
-                        bootstrap,
-                        discount,
-                    )
+                next_state_actions, next_state_log_pi, _ = actor(next_observations)
+                qf1_next_target, qf2_next_target = qnet_target(
+                    next_critic_observations, next_state_actions
                 )
-                qf1_next_target_value = qnet_target.get_value(qf1_next_target_projected)
-                qf2_next_target_value = qnet_target.get_value(qf2_next_target_projected)
-                if args.use_cdq:
-                    qf_next_target_dist = torch.where(
-                        qf1_next_target_value.unsqueeze(1)
-                        < qf2_next_target_value.unsqueeze(1),
-                        qf1_next_target_projected,
-                        qf2_next_target_projected,
-                    )
-                    qf1_next_target_dist = qf2_next_target_dist = qf_next_target_dist
-                else:
-                    qf1_next_target_dist, qf2_next_target_dist = (
-                        qf1_next_target_projected,
-                        qf2_next_target_projected,
-                    )
+                min_qf_next_target = (
+                    torch.min(qf1_next_target, qf2_next_target)
+                    - log_alpha.exp() * next_state_log_pi
+                )
+                next_q_value = (
+                    rewards.unsqueeze(-1)
+                    + bootstrap.unsqueeze(-1)
+                    * discount.unsqueeze(-1)
+                    * min_qf_next_target
+                )
 
             qf1, qf2 = qnet(critic_observations, actions)
-            qf1_loss = -torch.sum(
-                qf1_next_target_dist * F.log_softmax(qf1, dim=1), dim=1
-            ).mean()
-            qf2_loss = -torch.sum(
-                qf2_next_target_dist * F.log_softmax(qf2, dim=1), dim=1
-            ).mean()
+            qf1_loss = F.mse_loss(qf1, next_q_value)
+            qf2_loss = F.mse_loss(qf2, next_q_value)
             qf_loss = qf1_loss + qf2_loss
 
         q_optimizer.zero_grad(set_to_none=True)
@@ -356,8 +331,8 @@ def main():
         logs_dict["buffer_rewards"] = rewards.mean()
         logs_dict["critic_grad_norm"] = critic_grad_norm.detach()
         logs_dict["qf_loss"] = qf_loss.detach()
-        logs_dict["qf_max"] = qf1_next_target_value.max().detach()
-        logs_dict["qf_min"] = qf1_next_target_value.min().detach()
+        logs_dict["qf_max"] = min_qf_next_target.max().detach()
+        logs_dict["qf_min"] = min_qf_next_target.min().detach()
         return logs_dict
 
     def update_pol(data, logs_dict):
@@ -370,14 +345,13 @@ def main():
                 else data["observations"]
             )
 
-            qf1, qf2 = qnet(critic_observations, actor(data["observations"]))
-            qf1_value = qnet.get_value(F.softmax(qf1, dim=1))
-            qf2_value = qnet.get_value(F.softmax(qf2, dim=1))
+            pi, log_pi, _ = actor(data["observations"])
+            qf1, qf2 = qnet(critic_observations, pi)
             if args.use_cdq:
-                qf_value = torch.minimum(qf1_value, qf2_value)
+                qf_value = torch.minimum(qf1, qf2)
             else:
-                qf_value = (qf1_value + qf2_value) / 2.0
-            actor_loss = -qf_value.mean()
+                qf_value = (qf1 + qf2) / 2.0
+            actor_loss = ((log_alpha.exp().detach() * log_pi) - qf_value).mean()
 
         actor_optimizer.zero_grad(set_to_none=True)
         scaler.scale(actor_loss).backward()
@@ -388,8 +362,20 @@ def main():
         )
         scaler.step(actor_optimizer)
         scaler.update()
+
+        # Update alpha
+        alpha_optimizer.zero_grad(set_to_none=True)
+        with torch.no_grad():
+            _, log_pi, _ = actor(data["observations"])
+        alpha_loss = -log_alpha.exp() * (log_pi + target_entropy).detach().mean()
+        scaler.scale(alpha_loss).backward()
+        scaler.unscale_(alpha_optimizer)
+        alpha_optimizer.step()
+
         logs_dict["actor_grad_norm"] = actor_grad_norm.detach()
         logs_dict["actor_loss"] = actor_loss.detach()
+        logs_dict["alpha"] = log_alpha.exp().detach()
+        logs_dict["alpha_loss"] = alpha_loss.detach()
         return logs_dict
 
     if args.compile:
@@ -442,7 +428,7 @@ def main():
             device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
         ):
             norm_obs = normalize_obs(obs)
-            actions = policy(obs=norm_obs, dones=dones)
+            actions, _, _ = policy(obs=norm_obs)
 
         next_obs, rewards, dones, infos = envs.step(actions.float())
         truncations = infos["time_outs"]
@@ -522,6 +508,8 @@ def main():
                 with torch.no_grad():
                     logs = {
                         "actor_loss": logs_dict["actor_loss"].mean(),
+                        "alpha": logs_dict["alpha"].mean(),
+                        "alpha_loss": logs_dict["alpha_loss"].mean(),
                         "qf_loss": logs_dict["qf_loss"].mean(),
                         "qf_max": logs_dict["qf_max"].mean(),
                         "qf_min": logs_dict["qf_min"].mean(),
