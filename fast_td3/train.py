@@ -27,10 +27,11 @@ from tensordict import TensorDict, from_module
 
 from fast_td3_utils import EmpiricalNormalization, SimpleReplayBuffer, save_params
 from hyperparams import get_args
-from fast_td3 import Actor, Critic
+from fast_td3 import Actor, Critic, calculate_network_norms
 
 torch.set_float32_matmul_precision("high")
-
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 try:
     import jax.numpy as jnp
 except ImportError:
@@ -529,6 +530,16 @@ def main():
                         "buffer_rewards": logs_dict["buffer_rewards"].mean(),
                         "env_rewards": rewards.mean(),
                     }
+
+                    # Calculate and add network parameter norms
+                    actor_norms = calculate_network_norms(actor, "actor")
+                    critic_norms = calculate_network_norms(qnet, "critic")
+                    target_critic_norms = calculate_network_norms(qnet_target, "target_critic")
+                    
+                    # Add network norms to logs
+                    logs.update(actor_norms)
+                    logs.update(critic_norms)
+                    logs.update(target_critic_norms)
 
                     if args.eval_interval > 0 and global_step % args.eval_interval == 0:
                         print(f"Evaluating at global step {global_step}")

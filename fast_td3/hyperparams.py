@@ -20,7 +20,7 @@ class BaseArgs:
     """the rank of the device"""
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
-    project: str = "FastTD3"
+    project: str = "rl_scratch"
     """the project name"""
     use_wandb: bool = True
     """whether to use wandb"""

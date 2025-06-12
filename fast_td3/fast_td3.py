@@ -3,6 +3,45 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def calculate_network_norms(network: nn.Module, prefix: str = ""):
+    """
+    Calculate various norms of network parameters for logging.
+    
+    Args:
+        network: PyTorch network module
+        prefix: String prefix for metric names
+        
+    Returns:
+        Dictionary of norm metrics
+    """
+    metrics = {}
+    
+    # Calculate total parameter norm
+    total_norm = 0.0
+    param_count = 0
+    
+    # Calculate layer-wise norms
+    layer_norms = {}
+    
+    for name, param in network.named_parameters():
+        if param.requires_grad:
+            param_norm = param.data.norm(2).item()
+            layer_norms[f"{prefix}_{name}_norm"] = param_norm
+            total_norm += param_norm ** 2
+            param_count += param.numel()
+    
+    # Total parameter norm
+    total_norm = total_norm ** 0.5
+    metrics[f"{prefix}_total_param_norm"] = total_norm
+    metrics[f"{prefix}_param_count"] = param_count
+    
+    # Add layer-wise norms
+    metrics.update(layer_norms)
+    
+    
+    return metrics
+
+
 class DistributionalQNetwork(nn.Module):
     def __init__(
         self,

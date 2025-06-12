@@ -1,0 +1,3 @@
+[submodule "src/humanoid-bench"]
+	path = src/humanoid-bench
+	url = https://github.com/bkpcoding/humanoid-bench.git

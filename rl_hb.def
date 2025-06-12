@@ -1,0 +1,75 @@
+Bootstrap: docker
+From: nvidia/cuda:12.6.0-devel-ubuntu22.04
+
+%labels
+    Author          Sagar
+    Version         fasttd3-humanoidbench
+    Description     "Singularity image for FastTD3 + HumanoidBench on CUDA 12.6 (L40S)"
+
+%environment
+    # Activate the Conda env automatically
+    source /opt/conda/etc/profile.d/conda.sh
+    conda activate fasttd3_hb
+    # CUDA paths (added for completeness)
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    export PATH=/usr/local/cuda/bin:$PATH
+    # Optional: tune threading for PyTorch
+    export OMP_NUM_THREADS=8
+    # Use EGL for hardware-accelerated rendering
+    export MUJOCO_GL=egl
+
+%post
+    #####################################################################
+    # 1. System packages
+    #####################################################################
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        git git-lfs cmake build-essential pkg-config libegl1 libopengl0 \
+        libglfw3 libgl1-mesa-glx libosmesa6 \
+        nvidia-utils-560 libnvidia-gl-560 libnvidia-egl-gbm1 \
+        xvfb \
+        wget curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+    #####################################################################
+    # 2. Miniconda (lightweight) → Conda env "fasttd3_hb"
+    #####################################################################
+    wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-py310_24.1.2-0-Linux-x86_64.sh -O /tmp/miniconda.sh && \
+    bash /tmp/miniconda.sh -b -p /opt/conda && \
+    rm /tmp/miniconda.sh
+    /opt/conda/bin/conda clean -afy
+    /opt/conda/bin/conda create -y -n fasttd3_hb python=3.10
+    echo "conda activate fasttd3_hb" >> /opt/conda/etc/profile.d/conda.sh
+
+    #####################################################################
+    # 3. Python dependencies
+    #####################################################################
+    # Use dot instead of source, and set PATH explicitly
+    export PATH="/opt/conda/bin:$PATH"
+    . /opt/conda/etc/profile.d/conda.sh
+    conda activate fasttd3_hb
+
+    # PyTorch (CUDA 12 wheels) - Updated to versions that support CUDA 12.4
+    # pip install --no-cache-dir torch==2.4.0+cu124 torchvision==0.19.0+cu124 \
+    #    torchaudio==2.4.0+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
+
+    # HumanoidBench (editable install)
+    pip install --no-cache-dir --editable \
+       git+https://github.com/carlosferrazza/humanoid-bench.git#egg=humanoid-bench
+
+    # FastTD3 repo + its Python requirements
+    mkdir -p /workspace
+    git clone https://github.com/younggyoseo/FastTD3.git /workspace/fast_td3
+    pip install --no-cache-dir -r /workspace/fast_td3/requirements/requirements.txt
+
+    # Clean pip cache
+    python -m pip cache purge
+    conda clean -afy
+    conda deactivate
+
+%runscript
+#!/bin/bash
+# Usage: singularity run --nv fasttd3_hb.sif python fast_td3/train.py ...
+source /opt/conda/etc/profile.d/conda.sh
+conda activate fasttd3_hb
+exec "$@"
