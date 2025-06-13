@@ -25,7 +25,12 @@ from torch.amp import autocast, GradScaler
 
 from tensordict import TensorDict, from_module
 
-from fast_td3_utils import EmpiricalNormalization, SimpleReplayBuffer, save_params
+from fast_td3_utils import (
+    EmpiricalNormalization,
+    RewardNormalizer,
+    SimpleReplayBuffer,
+    save_params,
+)
 from hyperparams import get_args
 from fast_td3 import Actor, Critic
 
@@ -134,6 +139,13 @@ def main():
     else:
         obs_normalizer = nn.Identity()
         critic_obs_normalizer = nn.Identity()
+
+    if args.reward_normalization:
+        reward_normalizer = RewardNormalizer(
+            gamma=args.gamma, device=device, g_max=min(abs(args.v_min), abs(args.v_max))
+        )
+    else:
+        reward_normalizer = nn.Identity()
 
     actor = Actor(
         n_obs=n_obs,
@@ -353,7 +365,6 @@ def main():
         scaler.step(q_optimizer)
         scaler.update()
 
-        logs_dict["buffer_rewards"] = rewards.mean()
         logs_dict["critic_grad_norm"] = critic_grad_norm.detach()
         logs_dict["qf_loss"] = qf_loss.detach()
         logs_dict["qf_max"] = qf1_next_target_value.max().detach()
@@ -447,6 +458,9 @@ def main():
         next_obs, rewards, dones, infos = envs.step(actions.float())
         truncations = infos["time_outs"]
 
+        if args.reward_normalization:
+            reward_normalizer.update_stats(rewards, dones.float())
+
         if envs.asymmetric_obs:
             next_critic_obs = infos["observations"]["critic"]
 
@@ -494,6 +508,8 @@ def main():
                 data["next"]["observations"] = normalize_obs(
                     data["next"]["observations"]
                 )
+                raw_rewards = data["next"]["rewards"]
+                data["next"]["rewards"] = reward_normalizer(raw_rewards)
                 if envs.asymmetric_obs:
                     data["critic_observations"] = normalize_critic_obs(
                         data["critic_observations"]
@@ -527,8 +543,8 @@ def main():
                         "qf_min": logs_dict["qf_min"].mean(),
                         "actor_grad_norm": logs_dict["actor_grad_norm"].mean(),
                         "critic_grad_norm": logs_dict["critic_grad_norm"].mean(),
-                        "buffer_rewards": logs_dict["buffer_rewards"].mean(),
                         "env_rewards": rewards.mean(),
+                        "buffer_rewards": raw_rewards.mean(),
                     }
 
                     if args.eval_interval > 0 and global_step % args.eval_interval == 0:
