@@ -410,9 +410,13 @@ def main():
         policy = torch.compile(policy, mode=mode)
         normalize_obs = torch.compile(obs_normalizer.forward, mode=mode)
         normalize_critic_obs = torch.compile(critic_obs_normalizer.forward, mode=mode)
+        update_stats = torch.compile(reward_normalizer.update_stats, mode=mode)
+        normalize_reward = torch.compile(reward_normalizer.forward, mode=mode)
     else:
         normalize_obs = obs_normalizer.forward
         normalize_critic_obs = critic_obs_normalizer.forward
+        update_stats = reward_normalizer.update_stats
+        normalize_reward = reward_normalizer.forward
 
     if envs.asymmetric_obs:
         obs, critic_obs = envs.reset_with_critic_obs()
@@ -459,7 +463,7 @@ def main():
         truncations = infos["time_outs"]
 
         if args.reward_normalization:
-            reward_normalizer.update_stats(rewards, dones.float())
+            update_stats(rewards, dones.float())
 
         if envs.asymmetric_obs:
             next_critic_obs = infos["observations"]["critic"]
@@ -509,7 +513,7 @@ def main():
                     data["next"]["observations"]
                 )
                 raw_rewards = data["next"]["rewards"]
-                data["next"]["rewards"] = reward_normalizer(raw_rewards)
+                data["next"]["rewards"] = normalize_reward(raw_rewards)
                 if envs.asymmetric_obs:
                     data["critic_observations"] = normalize_critic_obs(
                         data["critic_observations"]
