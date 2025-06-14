@@ -25,7 +25,12 @@ from torch.amp import autocast, GradScaler
 
 from tensordict import TensorDict, from_module
 
-from fast_sac_utils import EmpiricalNormalization, SimpleReplayBuffer, save_params
+from fast_sac_utils import (
+    EmpiricalNormalization,
+    RewardNormalizer,
+    SimpleReplayBuffer,
+    save_params,
+)
 from hyperparams import get_args
 from fast_sac import Actor, Critic
 
@@ -135,6 +140,13 @@ def main():
         obs_normalizer = nn.Identity()
         critic_obs_normalizer = nn.Identity()
 
+    if args.reward_normalization:
+        reward_normalizer = RewardNormalizer(
+            gamma=args.gamma, device=device, g_max=10.0
+        )
+    else:
+        reward_normalizer = nn.Identity()
+
     actor = Actor(
         n_obs=n_obs,
         n_act=n_act,
@@ -182,7 +194,7 @@ def main():
 
     target_entropy = -float(n_act)
     log_alpha = torch.ones(1, requires_grad=True, device=device)
-    log_alpha.data.copy_(torch.tensor([np.log(0.1)], device=device))
+    log_alpha.data.copy_(torch.tensor([np.log(0.001)], device=device))
     alpha_optimizer = optim.Adam([log_alpha], lr=args.critic_learning_rate)
 
     rb = SimpleReplayBuffer(
@@ -385,9 +397,13 @@ def main():
         policy = torch.compile(policy, mode=mode)
         normalize_obs = torch.compile(obs_normalizer.forward, mode=mode)
         normalize_critic_obs = torch.compile(critic_obs_normalizer.forward, mode=mode)
+        update_stats = torch.compile(reward_normalizer.update_stats, mode=mode)
+        normalize_reward = torch.compile(reward_normalizer.forward, mode=mode)
     else:
         normalize_obs = obs_normalizer.forward
         normalize_critic_obs = critic_obs_normalizer.forward
+        update_stats = reward_normalizer.update_stats
+        normalize_reward = reward_normalizer.forward
 
     if envs.asymmetric_obs:
         obs, critic_obs = envs.reset_with_critic_obs()
@@ -432,6 +448,9 @@ def main():
 
         next_obs, rewards, dones, infos = envs.step(actions.float())
         truncations = infos["time_outs"]
+
+        if args.reward_normalization:
+            update_stats(rewards, dones.float())
 
         if envs.asymmetric_obs:
             next_critic_obs = infos["observations"]["critic"]
@@ -480,6 +499,8 @@ def main():
                 data["next"]["observations"] = normalize_obs(
                     data["next"]["observations"]
                 )
+                raw_rewards = data["next"]["rewards"]
+                data["next"]["rewards"] = normalize_reward(raw_rewards)
                 if envs.asymmetric_obs:
                     data["critic_observations"] = normalize_critic_obs(
                         data["critic_observations"]
@@ -515,8 +536,8 @@ def main():
                         "qf_min": logs_dict["qf_min"].mean(),
                         "actor_grad_norm": logs_dict["actor_grad_norm"].mean(),
                         "critic_grad_norm": logs_dict["critic_grad_norm"].mean(),
-                        "buffer_rewards": logs_dict["buffer_rewards"].mean(),
                         "env_rewards": rewards.mean(),
+                        "buffer_rewards": raw_rewards.mean(),
                     }
 
                     if args.eval_interval > 0 and global_step % args.eval_interval == 0:

@@ -78,6 +78,8 @@ class BaseArgs:
     """whether to use torch.compile."""
     obs_normalization: bool = True
     """whether to enable observation normalization"""
+    reward_normalization: bool = False
+    """whether to enable reward normalization"""
     max_grad_norm: float = 0.0
     """the maximum gradient norm"""
     amp: bool = True
