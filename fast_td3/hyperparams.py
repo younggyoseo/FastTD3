@@ -10,6 +10,8 @@ class BaseArgs:
     # See IsaacLabArgs for default hyperparameters for IsaacLab
     env_name: str = "h1hand-stand-v0"
     """the id of the environment"""
+    agent: str = "fasttd3"
+    """the agent to use: currently support [fasttd3, fasttd3_simbav2]"""
     seed: int = 1
     """seed of the experiment"""
     torch_deterministic: bool = True
@@ -74,12 +76,12 @@ class BaseArgs:
     """the maximum value of the support"""
     critic_hidden_dim: int = 1024
     """the hidden dimension of the critic network"""
-    critic_num_blocks: int = 2
-    """the number of blocks in the critic network"""
     actor_hidden_dim: int = 512
     """the hidden dimension of the actor network"""
-    actor_num_blocks: int = 2
-    """the number of blocks in the actor network"""
+    critic_num_blocks: int = 2
+    """(SimbaV2 only) the number of blocks in the critic network"""
+    actor_num_blocks: int = 1
+    """(SimbaV2 only) the number of blocks in the actor network"""
     use_cdq: bool = True
     """whether to use Clipped Double Q-learning"""
     measure_burnin: int = 3
@@ -93,7 +95,7 @@ class BaseArgs:
     obs_normalization: bool = True
     """whether to enable observation normalization"""
     reward_normalization: bool = False
-    """whether to enable reward normalization"""
+    """whether to enable reward normalization (Not recommended for now, it's unstable.)"""
     max_grad_norm: float = 0.0
     """the maximum gradient norm"""
     amp: bool = True
@@ -360,6 +362,7 @@ class Go1GetupArgs(MuJoCoPlaygroundArgs):
 class LeapCubeReorientArgs(MuJoCoPlaygroundArgs):
     env_name: str = "LeapCubeReorient"
     num_steps: int = 3
+    gamma: float = 0.99
     policy_noise: float = 0.2
     v_min: float = -50.0
     v_max: float = 50.0
@@ -371,6 +374,7 @@ class LeapCubeRotateZAxisArgs(MuJoCoPlaygroundArgs):
     env_name: str = "LeapCubeRotateZAxis"
     num_steps: int = 1
     policy_noise: float = 0.2
+    gamma: float = 0.99
     v_min: float = -10.0
     v_max: float = 10.0
     use_cdq: bool = False

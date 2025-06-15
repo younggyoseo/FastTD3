@@ -12,6 +12,7 @@ os.environ["JAX_DEFAULT_MATMUL_PRECISION"] = "highest"
 
 import random
 import time
+import math
 
 import tqdm
 import wandb
@@ -32,7 +33,6 @@ from fast_td3_utils import (
     save_params,
 )
 from hyperparams import get_args
-from fast_td3 import Actor, Critic
 
 torch.set_float32_matmul_precision("high")
 
@@ -147,44 +147,67 @@ def main():
     else:
         reward_normalizer = nn.Identity()
 
-    actor = Actor(
-        n_obs=n_obs,
-        n_act=n_act,
-        num_envs=args.num_envs,
-        device=device,
-        init_scale=args.init_scale,
-        hidden_dim=args.actor_hidden_dim,
-    )
-    actor_detach = Actor(
-        n_obs=n_obs,
-        n_act=n_act,
-        num_envs=args.num_envs,
-        device=device,
-        init_scale=args.init_scale,
-        hidden_dim=args.actor_hidden_dim,
-    )
+    actor_kwargs = {
+        "n_obs": n_obs,
+        "n_act": n_act,
+        "num_envs": args.num_envs,
+        "device": device,
+        "init_scale": args.init_scale,
+        "hidden_dim": args.actor_hidden_dim,
+    }
+    critic_kwargs = {
+        "n_obs": n_critic_obs,
+        "n_act": n_act,
+        "num_atoms": args.num_atoms,
+        "v_min": args.v_min,
+        "v_max": args.v_max,
+        "hidden_dim": args.critic_hidden_dim,
+        "device": device,
+    }
+
+    if args.agent == "fasttd3":
+        from fast_td3 import Actor, Critic
+
+        print("Using FastTD3")
+    elif args.agent == "fasttd3_simbav2":
+        from fast_td3_simbav2 import Actor, Critic
+
+        print("Using FastTD3 + SimbaV2")
+        actor_kwargs.pop("init_scale")
+        actor_kwargs.update(
+            {
+                "scaler_init": math.sqrt(2.0 / args.actor_hidden_dim),
+                "scaler_scale": math.sqrt(2.0 / args.actor_hidden_dim),
+                "alpha_init": 1.0 / (args.actor_num_blocks + 1),
+                "alpha_scale": 1.0 / math.sqrt(args.actor_hidden_dim),
+                "expansion": 4,
+                "c_shift": 3.0,
+                "num_blocks": args.actor_num_blocks,
+            }
+        )
+        critic_kwargs.update(
+            {
+                "scaler_init": math.sqrt(2.0 / args.critic_hidden_dim),
+                "scaler_scale": math.sqrt(2.0 / args.critic_hidden_dim),
+                "alpha_init": 1.0 / (args.critic_num_blocks + 1),
+                "alpha_scale": 1.0 / math.sqrt(args.critic_hidden_dim),
+                "num_blocks": args.critic_num_blocks,
+                "expansion": 4,
+                "c_shift": 3.0,
+            }
+        )
+    else:
+        raise ValueError(f"Agent {args.agent} not supported")
+
+    actor = Actor(**actor_kwargs)
+    actor_detach = Actor(**actor_kwargs)
+
     # Copy params to actor_detach without grad
     from_module(actor).data.to_module(actor_detach)
     policy = actor_detach.explore
 
-    qnet = Critic(
-        n_obs=n_critic_obs,
-        n_act=n_act,
-        num_atoms=args.num_atoms,
-        v_min=args.v_min,
-        v_max=args.v_max,
-        hidden_dim=args.critic_hidden_dim,
-        device=device,
-    )
-    qnet_target = Critic(
-        n_obs=n_critic_obs,
-        n_act=n_act,
-        num_atoms=args.num_atoms,
-        v_min=args.v_min,
-        v_max=args.v_max,
-        hidden_dim=args.critic_hidden_dim,
-        device=device,
-    )
+    qnet = Critic(**critic_kwargs)
+    qnet_target = Critic(**critic_kwargs)
     qnet_target.load_state_dict(qnet.state_dict())
 
     q_optimizer = optim.AdamW(
@@ -196,6 +219,18 @@ def main():
         list(actor.parameters()),
         lr=args.actor_learning_rate,
         weight_decay=args.weight_decay,
+    )
+
+    # Add learning rate schedulers
+    q_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        q_optimizer,
+        T_max=args.total_timesteps,
+        eta_min=args.critic_learning_rate_end,  # Decay to 10% of initial lr
+    )
+    actor_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        actor_optimizer,
+        T_max=args.total_timesteps,
+        eta_min=args.actor_learning_rate_end,  # Decay to 10% of initial lr
     )
 
     rb = SimpleReplayBuffer(
@@ -585,6 +620,8 @@ def main():
                         {
                             "speed": speed,
                             "frame": global_step * args.num_envs,
+                            "critic_lr": q_scheduler.get_last_lr()[0],
+                            "actor_lr": actor_scheduler.get_last_lr()[0],
                             **logs,
                         },
                         step=global_step,
@@ -606,6 +643,10 @@ def main():
                     args,
                     f"models/{run_name}_{global_step}.pt",
                 )
+
+            # Update learning rates
+            q_scheduler.step()
+            actor_scheduler.step()
 
         global_step += 1
         pbar.update(1)

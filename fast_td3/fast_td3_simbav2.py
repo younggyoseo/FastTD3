@@ -3,7 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-def l2normalize(tensor: torch.Tensor, axis: int = -1, eps: float = 1e-8) -> torch.Tensor:
+
+def l2normalize(
+    tensor: torch.Tensor, axis: int = -1, eps: float = 1e-8
+) -> torch.Tensor:
     """Computes L2 normalization of a tensor."""
     return tensor / (torch.linalg.norm(tensor, ord=2, dim=axis, keepdim=True) + eps)
 
@@ -12,7 +15,14 @@ class Scaler(nn.Module):
     """
     A learnable scaling layer.
     """
-    def __init__(self, dim: int, init: float = 1.0, scale: float = 1.0, device: torch.device = None):
+
+    def __init__(
+        self,
+        dim: int,
+        init: float = 1.0,
+        scale: float = 1.0,
+        device: torch.device = None,
+    ):
         super().__init__()
         self.scaler = nn.Parameter(torch.full((dim,), init * scale, device=device))
         self.forward_scaler = init / scale
@@ -25,6 +35,7 @@ class HyperDense(nn.Module):
     """
     A dense layer without bias and with orthogonal initialization.
     """
+
     def __init__(self, in_dim: int, hidden_dim: int, device: torch.device = None):
         super().__init__()
         self.w = nn.Linear(in_dim, hidden_dim, bias=False, device=device)
@@ -38,7 +49,17 @@ class HyperMLP(nn.Module):
     """
     A small MLP with a specific architecture using HyperDense and Scaler.
     """
-    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, scaler_init: float, scaler_scale: float, eps: float = 1e-8, device: torch.device = None):
+
+    def __init__(
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        scaler_init: float,
+        scaler_scale: float,
+        eps: float = 1e-8,
+        device: torch.device = None,
+    ):
         super().__init__()
         self.w1 = HyperDense(in_dim, hidden_dim, device=device)
         self.scaler = Scaler(hidden_dim, scaler_init, scaler_scale, device=device)
@@ -54,11 +75,21 @@ class HyperMLP(nn.Module):
         x = l2normalize(x, axis=-1)
         return x
 
+
 class HyperEmbedder(nn.Module):
     """
     Embeds input by concatenating a constant, normalizing, and applying layers.
     """
-    def __init__(self, in_dim: int, hidden_dim: int, scaler_init: float, scaler_scale: float, c_shift: float, device: torch.device = None):
+
+    def __init__(
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        scaler_init: float,
+        scaler_scale: float,
+        c_shift: float,
+        device: torch.device = None,
+    ):
         super().__init__()
         # The input dimension to the dense layer is in_dim + 1
         self.w = HyperDense(in_dim + 1, hidden_dim, device=device)
@@ -74,11 +105,22 @@ class HyperEmbedder(nn.Module):
         x = l2normalize(x, axis=-1)
         return x
 
+
 class HyperLERPBlock(nn.Module):
     """
     A residual block using Linear Interpolation (LERP).
     """
-    def __init__(self, hidden_dim: int, scaler_init: float, scaler_scale: float, alpha_init: float, alpha_scale: float, expansion: int = 4, device: torch.device = None):
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        scaler_init: float,
+        scaler_scale: float,
+        alpha_init: float,
+        alpha_scale: float,
+        expansion: int = 4,
+        device: torch.device = None,
+    ):
         super().__init__()
         self.mlp = HyperMLP(
             in_dim=hidden_dim,
@@ -109,7 +151,15 @@ class HyperTanhPolicy(nn.Module):
     """
     A policy that outputs a Tanh action.
     """
-    def __init__(self, hidden_dim: int, action_dim: int, scaler_init: float, scaler_scale: float, device: torch.device = None):
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        action_dim: int,
+        scaler_init: float,
+        scaler_scale: float,
+        device: torch.device = None,
+    ):
         super().__init__()
         self.mean_w1 = HyperDense(hidden_dim, hidden_dim, device=device)
         self.mean_scaler = Scaler(hidden_dim, scaler_init, scaler_scale, device=device)
@@ -129,18 +179,27 @@ class HyperCategoricalValue(nn.Module):
     """
     A value function that predicts a categorical distribution over a range of values.
     """
-    def __init__(self, hidden_dim: int, num_bins: int, scaler_init: float, scaler_scale: float, device: torch.device = None):
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_bins: int,
+        scaler_init: float,
+        scaler_scale: float,
+        device: torch.device = None,
+    ):
         super().__init__()
         self.w1 = HyperDense(hidden_dim, hidden_dim, device=device)
         self.scaler = Scaler(hidden_dim, scaler_init, scaler_scale, device=device)
         self.w2 = HyperDense(hidden_dim, num_bins, device=device)
         self.bias = nn.Parameter(torch.zeros(num_bins, device=device))
-     
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         logits = self.w1(x)
         logits = self.scaler(logits)
         logits = self.w2(logits) + self.bias
         return logits
+
 
 class DistributionalQNetwork(nn.Module):
     def __init__(
@@ -394,7 +453,7 @@ class Actor(nn.Module):
             scaler_scale=scaler_scale,
             device=device,
         )
-        
+
         noise_scales = (
             torch.rand(num_envs, 1, device=device) * (std_max - std_min) + std_min
         )
