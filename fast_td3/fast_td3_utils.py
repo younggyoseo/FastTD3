@@ -1,5 +1,7 @@
 import os
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 
@@ -470,6 +472,44 @@ class EmpiricalNormalization(nn.Module):
     @torch.jit.unused
     def inverse(self, y):
         return y * (self._std + self.eps) + self._mean
+
+
+class RewardNormalizer(nn.Module):
+    def __init__(
+        self,
+        gamma: float,
+        device: torch.device,
+        g_max: float = 10.0,
+        epsilon: float = 1e-8,
+    ):
+        super().__init__()
+        self.register_buffer(
+            "G", torch.zeros(1, device=device)
+        )  # running estimate of the discounted return
+        self.register_buffer("G_r_max", torch.zeros(1, device=device))  # running-max
+        self.G_rms = EmpiricalNormalization(shape=1, device=device)
+        self.gamma = gamma
+        self.g_max = g_max
+        self.epsilon = epsilon
+
+    def _scale_reward(self, rewards: torch.Tensor) -> torch.Tensor:
+        var_denominator = self.G_rms.std[0] + self.epsilon
+        min_required_denominator = self.G_r_max / self.g_max
+        denominator = torch.maximum(var_denominator, min_required_denominator)
+
+        return rewards / denominator
+
+    def update_stats(
+        self,
+        rewards: torch.Tensor,
+        dones: torch.Tensor,
+    ):
+        self.G = self.gamma * (1 - dones) * self.G + rewards
+        self.G_rms.update(self.G.view(-1, 1))
+        self.G_r_max = max(self.G_r_max, max(abs(self.G)))
+
+    def forward(self, rewards: torch.Tensor) -> torch.Tensor:
+        return self._scale_reward(rewards)
 
 
 def cpu_state(sd):
