@@ -36,6 +36,10 @@ class BaseArgs:
     """the learning rate of the critic"""
     actor_learning_rate: float = 3e-4
     """the learning rate for the actor"""
+    critic_learning_rate_end: float = 3e-4
+    """the learning rate of the critic at the end of training"""
+    actor_learning_rate_end: float = 3e-4
+    """the learning rate for the actor at the end of training"""
     buffer_size: int = 1024 * 50
     """the replay memory buffer size"""
     num_steps: int = 1
@@ -70,8 +74,12 @@ class BaseArgs:
     """the maximum value of the support"""
     critic_hidden_dim: int = 1024
     """the hidden dimension of the critic network"""
+    critic_num_blocks: int = 2
+    """the number of blocks in the critic network"""
     actor_hidden_dim: int = 512
     """the hidden dimension of the actor network"""
+    actor_num_blocks: int = 2
+    """the number of blocks in the actor network"""
     use_cdq: bool = True
     """whether to use Clipped Double Q-learning"""
     measure_burnin: int = 3
