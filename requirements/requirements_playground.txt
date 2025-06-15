@@ -1,3 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+
 gymnasium<1.0.0
 jax-jumpy==1.0.0 ; python_version >= "3.8" and python_version < "3.11"
 matplotlib
@@ -9,15 +11,21 @@ pygame
 stable-baselines3
 tqdm
 wandb
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
 torchrl==0.7.2
 tensordict==0.7.2
 tyro
 loguru
+
+# Git dependency
 git+https://github.com/younggyoseo/mujoco_playground.git
-torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
-torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+
+# JAX + CUDA 12
 jax[cuda12]==0.4.35
+
+# NVIDIA CUDA 12.4 dependencies
 nvidia-cublas-cu12==12.4.5.8
 nvidia-cuda-cupti-cu12==12.4.127
 nvidia-cuda-nvcc-cu12==12.8.93
@@ -32,3 +40,4 @@ nvidia-cusparselt-cu12==0.6.2
 nvidia-nccl-cu12==2.21.5
 nvidia-nvjitlink-cu12==12.4.127
 nvidia-nvtx-cu12==12.4.127
+
