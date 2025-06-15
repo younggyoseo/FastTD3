@@ -221,7 +221,6 @@ class DistributionalQNetwork(nn.Module):
             rewards.unsqueeze(1)
             + bootstrap.unsqueeze(1) * discount.unsqueeze(1) * q_support
         )
-        print()
         target_z = target_z.clamp(self.v_min, self.v_max)
         b = (target_z - self.v_min) / delta_z
         l = torch.floor(b).long()
