@@ -102,28 +102,78 @@ Please see `fast_td3/hyperparams.py` for information regarding hyperparameters!
 ```bash
 conda activate fasttd3_hb
 # FastTD3
-python fast_td3/train.py --env_name h1hand-hurdle-v0 --exp_name FastTD3 --render_interval 5000 --seed 1
+python fast_td3/train.py \
+    --env_name h1hand-hurdle-v0 \
+    --exp_name FastTD3 \
+    --render_interval 5000 \
+    --seed 1
 # FastTD3 + SimbaV2
-python fast_td3/train.py --env_name h1hand-hurdle-v0 --exp_name FastTD3 --render_interval 5000 --agent fasttd3_simbav2 --batch_size 8192 --critic_learning_rate_end 3e-5 --actor_learning_rate_end 3e-5 --weight_decay 0.0 --critic_hidden_dim 512 --critic_num_blocks 2 --actor_hidden_dim 256 --actor_num_blocks 1 --seed 1
+python fast_td3/train.py \
+    --env_name h1hand-hurdle-v0 \
+    --exp_name FastTD3 \
+    --render_interval 5000 \
+    --agent fasttd3_simbav2 \
+    --batch_size 8192 \
+    --critic_learning_rate_end 3e-5 \
+    --actor_learning_rate_end 3e-5 \
+    --weight_decay 0.0 \
+    --critic_hidden_dim 512 \
+    --critic_num_blocks 2 \
+    --actor_hidden_dim 256 \
+    --actor_num_blocks 1 \
+    --seed 1
 ```
 
 ### MuJoCo Playground Experiments
 ```bash
 conda activate fasttd3_playground
 # FastTD3
-python fast_td3/train.py --env_name T1JoystickFlatTerrain --exp_name FastTD3 --render_interval 5000 --seed 1
-python fast_td3/train.py --env_name G1JoystickFlatTerrain --exp_name FastTD3 --render_interval 5000 --seed 1
+python fast_td3/train.py \
+    --env_name T1JoystickFlatTerrain \
+    --exp_name FastTD3 \
+    --render_interval 5000 \
+    --seed 1
 # FastTD3 + SimbaV2
-python fast_td3/train.py --env_name T1JoystickFlatTerrain --exp_name FastTD3 --render_interval 5000 --agent fasttd3_simbav2 --batch_size 8192 --critic_learning_rate_end 3e-5 --actor_learning_rate_end 3e-5 --weight_decay 0.0 --critic_hidden_dim 512 --critic_num_blocks 2 --actor_hidden_dim 256 --actor_num_blocks 1 --seed 1
+python fast_td3/train.py \
+    --env_name T1JoystickFlatTerrain \
+    --exp_name FastTD3 \
+    --render_interval 5000 \
+    --agent fasttd3_simbav2 \
+    --batch_size 8192 \
+    --critic_learning_rate_end 3e-5 \
+    --actor_learning_rate_end 3e-5 \
+    --weight_decay 0.0 \
+    --critic_hidden_dim 512 \
+    --critic_num_blocks 2 \
+    --actor_hidden_dim 256 \
+    --actor_num_blocks 1 \
+    --seed 1
 ```
 
 ### IsaacLab Experiments
 ```bash
 conda activate fasttd3_isaaclab
 # FastTD3
-python fast_td3/train.py --env_name Isaac-Velocity-Flat-G1-v0 --exp_name FastTD3 --render_interval 0 --seed 1
+python fast_td3/train.py \
+    --env_name Isaac-Velocity-Flat-G1-v0 \
+    --exp_name FastTD3 \
+    --render_interval 0 \
+    --seed 1
 # FastTD3 + SimbaV2
-python fast_td3/train.py --env_name Isaac-Repose-Cube-Allegro-Direct-v0 --exp_name FastTD3 --render_interval 0 --agent fasttd3_simbav2 --batch_size 8192 --critic_learning_rate_end 3e-5 --actor_learning_rate_end 3e-5 --weight_decay 0.0 --critic_hidden_dim 512 --critic_num_blocks 2 --actor_hidden_dim 256 --actor_num_blocks 1 --seed 1
+python fast_td3/train.py \
+    --env_name Isaac-Repose-Cube-Allegro-Direct-v0 \
+    --exp_name FastTD3 \
+    --render_interval 0 \
+    --agent fasttd3_simbav2 \
+    --batch_size 8192 \
+    --critic_learning_rate_end 3e-5 \
+    --actor_learning_rate_end 3e-5 \
+    --weight_decay 0.0 \
+    --critic_hidden_dim 512 \
+    --critic_num_blocks 2 \
+    --actor_hidden_dim 256 \
+    --actor_num_blocks 1 \
+    --seed 1
 ```
 
 **Quick note:** For boolean-based arguments, you can set them to False by adding `no_` in front each argument, for instance, if you want to disable Clipped Q Learning, you can specify `--no_use_cdq` in your command.
@@ -189,6 +239,16 @@ We would like to thank people who have helped throughout the project:
   pages={1587--1596},
   year={2018},
   organization={PMLR}
+}
+```
+
+### SimbaV2
+```bibtex
+@article{lee2025hyperspherical,
+  title={Hyperspherical normalization for scalable deep reinforcement learning},
+  author={Lee, Hojoon and Lee, Youngdo and Seno, Takuma and Kim, Donghu and Stone, Peter and Choo, Jaegul},
+  journal={arXiv preprint arXiv:2502.15280},
+  year={2025}
 }
 ```
 
@@ -278,4 +338,3 @@ Following the [LeanRL](https://github.com/pytorch-labs/LeanRL)'s recommendation,
   url     = "https://arthshukla.substack.com/p/speeding-up-sac-with-massively-parallel"
 }
 ```
-
