@@ -22,7 +22,7 @@ class BaseArgs:
     """the name of this experiment"""
     project: str = "rl_scratch"
     """the project name"""
-    use_wandb: bool = True
+    use_wandb: bool = False
     """whether to use wandb"""
     checkpoint_path: str = None
     """the path to the checkpoint file"""
@@ -30,7 +30,7 @@ class BaseArgs:
     """the number of environments to run in parallel"""
     num_eval_envs: int = 128
     """the number of evaluation environments to run in parallel (only valid for MuJoCo Playground)"""
-    total_timesteps: int = 150000
+    total_timesteps: int = 1500000
     """total timesteps of the experiments"""
     critic_learning_rate: float = 3e-4
     """the learning rate of the critic"""
@@ -76,9 +76,9 @@ class BaseArgs:
     """whether to use Clipped Double Q-learning"""
     measure_burnin: int = 3
     """Number of burn-in iterations for speed measure."""
-    eval_interval: int = 5000
+    eval_interval: int = 10000
     """the interval to evaluate the model"""
-    render_interval: int = 5000
+    render_interval: int = 10000
     """the interval to render the model"""
     compile: bool = True
     """whether to use torch.compile."""
