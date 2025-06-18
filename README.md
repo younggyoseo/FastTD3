@@ -81,6 +81,20 @@ cd ..
 pip install -r requirements/requirements.txt
 ```
 
+### Environment for MTBench
+MTBench does not support Humanoid tasks, but support useful multi-task RL benchmark with Franka and Go1.
+
+```bash
+conda create -n fasttd3_mtbench -y python=3.8  # Note python version
+conda activate fasttd3_mtbench
+
+# Install IsaacGym -- recommend to follow instructions in https://github.com/BoosterRobotics/booster_gym
+...
+
+# Install project-specific requirements
+pip install -r requirements/requirements_isaacgym.txt
+```
+
 ### (Optional) Accelerate headless GPU rendering in cloud instances
 
 In some cloud VM images the NVIDIA kernel driver is present but the user-space OpenGL/EGL/Vulkan libraries aren't, so MuJoCo falls back to CPU renderer. You can install just the NVIDIA user-space libraries (and skip rebuilding the kernel module) with:
@@ -162,6 +176,32 @@ python fast_td3/train.py \
 # FastTD3 + SimbaV2
 python fast_td3/train.py \
     --env_name Isaac-Repose-Cube-Allegro-Direct-v0 \
+    --exp_name FastTD3 \
+    --render_interval 0 \
+    --agent fasttd3_simbav2 \
+    --batch_size 8192 \
+    --critic_learning_rate_end 3e-5 \
+    --actor_learning_rate_end 3e-5 \
+    --weight_decay 0.0 \
+    --critic_hidden_dim 512 \
+    --critic_num_blocks 2 \
+    --actor_hidden_dim 256 \
+    --actor_num_blocks 1 \
+    --seed 1
+```
+
+### MTBench Experiments
+```bash
+conda activate fasttd3_mtbench
+# FastTD3
+python fast_td3/train.py \
+    --env_name MTBench-meta-world-v2-mt10 \
+    --exp_name FastTD3 \
+    --render_interval 0 \
+    --seed 1
+# FastTD3 + SimbaV2
+python fast_td3/train.py \
+    --env_name MTBench-meta-world-v2-mt10 \
     --exp_name FastTD3 \
     --render_interval 0 \
     --agent fasttd3_simbav2 \
