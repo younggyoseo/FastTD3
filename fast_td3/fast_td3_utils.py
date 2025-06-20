@@ -556,7 +556,7 @@ class PerTaskEmpiricalNormalization(nn.Module):
     def __init__(
         self,
         num_tasks: int,
-        shape: tuple | int,
+        shape: tuple,
         device: torch.device,
         eps: float = 1e-2,
         until: int = None,
