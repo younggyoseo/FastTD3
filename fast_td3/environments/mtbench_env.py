@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 from omegaconf import OmegaConf
 
@@ -87,7 +89,6 @@ class MTBenchEnv:
         raise NotImplementedError(
             "We don't support rendering for IsaacLab environments"
         )
-
 
 MTBENCH_MW2_CONFIG = {
     "name": "meta-world-v2",
