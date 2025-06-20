@@ -93,6 +93,13 @@ conda activate fasttd3_mtbench
 # Install IsaacGym -- recommend to follow instructions in https://github.com/BoosterRobotics/booster_gym
 ...
 
+# Install MTBench
+git clone https://github.com/Viraj-Joshi/MTBench.git
+cd MTbench
+pip install -e .
+pip install skrl
+cd ..
+
 # Install project-specific requirements
 pip install -r requirements/requirements_isaacgym.txt
 ```
