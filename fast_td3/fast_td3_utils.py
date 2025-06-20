@@ -553,7 +553,14 @@ def save_params(
 class PerTaskEmpiricalNormalization(nn.Module):
     """Normalize mean and variance of values based on empirical values for each task."""
 
-    def __init__(self, num_tasks, shape, device, eps=1e-2, until=None):
+    def __init__(
+        self,
+        num_tasks: int,
+        shape: tuple | int,
+        device: torch.device,
+        eps: float = 1e-2,
+        until: int = None,
+    ):
         """
         Initialize PerTaskEmpiricalNormalization module.
 
@@ -618,7 +625,6 @@ class PerTaskEmpiricalNormalization(nn.Module):
         """Update running statistics for the tasks present in the batch."""
         unique_tasks = torch.unique(task_ids)
 
-        # This loop is efficient as it only runs over tasks present in the batch
         for task_id in unique_tasks:
             if self.until is not None and self.count[task_id] >= self.until:
                 continue
@@ -665,6 +671,9 @@ class PerTaskRewardNormalizer(nn.Module):
         g_max: float = 10.0,
         epsilon: float = 1e-8,
     ):
+        """
+        Per-task reward normalizer, motivation comes from BRC (https://arxiv.org/abs/2505.23150v1)
+        """
         super().__init__()
         self.num_tasks = num_tasks
         self.gamma = gamma
@@ -744,11 +753,4 @@ class PerTaskRewardNormalizer(nn.Module):
             rewards (torch.Tensor): Reward tensor, shape [num_envs].
             task_ids (torch.Tensor): Task indices, shape [num_envs].
         """
-        if self.training:
-            # Note: The original implementation didn't update stats inside forward.
-            # Here we assume a more standard update-on-forward pattern.
-            # If you want to separate them, just call `update_stats` manually.
-            # For this example, let's assume `update_stats` is called separately.
-            pass
-
         return self._scale_reward(rewards, task_ids)
