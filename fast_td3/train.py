@@ -332,7 +332,6 @@ def main():
                 rewards = (
                     infos["episode"]["success"].float() if "episode" in infos else 0.0
                 )
-
             episode_returns = torch.where(
                 ~done_masks, episode_returns + rewards, episode_returns
             )
