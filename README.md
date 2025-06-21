@@ -10,11 +10,13 @@ For more information, please see our [project webpage](https://younggyo.me/fast_
 
 
 ## ❗ Updates
-- **[June/15/2025]** Added support for FastTD3 + SimbaV2! It's faster to train, and often achieves better asymptotic performance.
+- **[Jun/20/2025]** Added support for [MTBench](https://github.com/Viraj-Joshi/MTBench)
 
-- **[Jun/6/2025]** Thanks to [Antonin Raffin](https://araffin.github.io/) ([@araffin](https://github.com/araffin)), we fixed the issues when using `n_steps` > 1, which stabilizes training with n-step return quite a lot!
+- **[Jun/15/2025]** Added support for FastTD3 + [SimbaV2](https://dojeon-ai.github.io/SimbaV2/)! It's faster to train, and often achieves better asymptotic performance. We recommend using FastTD3 + SimbaV2 for most cases.
 
-- **[Jun/1/2025]** Updated the figures in the technical report to report deterministic evaluation for IsaacLab tasks.
+- **[Jun/06/2025]** Thanks to [Antonin Raffin](https://araffin.github.io/) ([@araffin](https://github.com/araffin)), we fixed the issues when using `n_steps` > 1, which stabilizes training with n-step return quite a lot!
+
+- **[Jun/01/2025]** Updated the figures in the technical report to report deterministic evaluation for IsaacLab tasks.
 
 
 ## ✨ Features
@@ -79,6 +81,27 @@ cd ..
 
 # Install project-specific requirements
 pip install -r requirements/requirements.txt
+```
+
+### Environment for MTBench
+MTBench does not support humanoid experiments, but is a useful multi-task benchmark with massive parallel simulation. This could be useful for users who want to use FastTD3 for their multi-task experiments.
+
+```bash
+conda create -n fasttd3_mtbench -y python=3.8  # Note python version
+conda activate fasttd3_mtbench
+
+# Install IsaacGym -- recommend to follow instructions in https://github.com/BoosterRobotics/booster_gym
+...
+
+# Install MTBench
+git clone https://github.com/Viraj-Joshi/MTBench.git
+cd MTbench
+pip install -e .
+pip install skrl
+cd ..
+
+# Install project-specific requirements
+pip install -r requirements/requirements_isaacgym.txt
 ```
 
 ### (Optional) Accelerate headless GPU rendering in cloud instances
@@ -162,6 +185,32 @@ python fast_td3/train.py \
 # FastTD3 + SimbaV2
 python fast_td3/train.py \
     --env_name Isaac-Repose-Cube-Allegro-Direct-v0 \
+    --exp_name FastTD3 \
+    --render_interval 0 \
+    --agent fasttd3_simbav2 \
+    --batch_size 8192 \
+    --critic_learning_rate_end 3e-5 \
+    --actor_learning_rate_end 3e-5 \
+    --weight_decay 0.0 \
+    --critic_hidden_dim 512 \
+    --critic_num_blocks 2 \
+    --actor_hidden_dim 256 \
+    --actor_num_blocks 1 \
+    --seed 1
+```
+
+### MTBench Experiments
+```bash
+conda activate fasttd3_mtbench
+# FastTD3
+python fast_td3/train.py \
+    --env_name MTBench-meta-world-v2-mt10 \
+    --exp_name FastTD3 \
+    --render_interval 0 \
+    --seed 1
+# FastTD3 + SimbaV2
+python fast_td3/train.py \
+    --env_name MTBench-meta-world-v2-mt10 \
     --exp_name FastTD3 \
     --render_interval 0 \
     --agent fasttd3_simbav2 \
@@ -312,6 +361,18 @@ Following the [LeanRL](https://github.com/pytorch-labs/LeanRL)'s recommendation,
    number={6},
    pages={3740-3747},
    doi={10.1109/LRA.2023.3270034}
+}
+```
+
+### MTBench
+```bibtex
+@inproceedings{
+joshi2025benchmarking,
+title={Benchmarking Massively Parallelized Multi-Task Reinforcement Learning for Robotics Tasks},
+author={Viraj Joshi and Zifan Xu and Bo Liu and Peter Stone and Amy Zhang},
+booktitle={Reinforcement Learning Conference},
+year={2025},
+url={https://openreview.net/forum?id=z0MM0y20I2}
 }
 ```
 

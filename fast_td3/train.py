@@ -15,6 +15,13 @@ import random
 import time
 
 import numpy as np
+
+try:
+    # Required for avoiding IsaacGym import error
+    import isaacgym
+except ImportError:
+    pass
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,6 +30,7 @@ import tqdm
 import wandb
 from fast_td3_utils import (
     EmpiricalNormalization,
+    PerTaskRewardNormalizer,
     RewardNormalizer,
     SimpleReplayBuffer,
     save_params,
@@ -110,6 +118,14 @@ def main():
         )
         eval_envs = envs
         render_env = envs
+    elif args.env_name.startswith("MTBench-"):
+        from environments.mtbench_env import MTBenchEnv
+
+        env_name = "-".join(args.env_name.split("-")[1:])
+        env_type = "mtbench"
+        envs = MTBenchEnv(env_name, args.device_rank, args.num_envs, args.seed)
+        eval_envs = envs
+        render_env = envs
     else:
         from environments.mujoco_playground_env import make_env
 
@@ -157,9 +173,19 @@ def main():
 
     ##NOTE - 奖励归一化
     if args.reward_normalization:
-        reward_normalizer = RewardNormalizer(
-            gamma=args.gamma, device=device, g_max=min(abs(args.v_min), abs(args.v_max))
-        )
+        if env_type in ["mtbench"]:
+            reward_normalizer = PerTaskRewardNormalizer(
+                num_tasks=envs.num_tasks,
+                gamma=args.gamma,
+                device=device,
+                g_max=min(abs(args.v_min), abs(args.v_max)),
+            )
+        else:
+            reward_normalizer = RewardNormalizer(
+                gamma=args.gamma,
+                device=device,
+                g_max=min(abs(args.v_min), abs(args.v_max)),
+            )
     else:
         reward_normalizer = nn.Identity()
 
@@ -182,14 +208,38 @@ def main():
         "device": device,
     }
 
-    ##NOTE - 选择算法，包括 fast_td3 和 fast_td3_simbav2
+    if env_type == "mtbench":
+        actor_kwargs["n_obs"] = n_obs - envs.num_tasks + args.task_embedding_dim
+        critic_kwargs["n_obs"] = n_critic_obs - envs.num_tasks + args.task_embedding_dim
+        actor_kwargs["num_tasks"] = envs.num_tasks
+        actor_kwargs["task_embedding_dim"] = args.task_embedding_dim
+        critic_kwargs["num_tasks"] = envs.num_tasks
+        critic_kwargs["task_embedding_dim"] = args.task_embedding_dim
+
     if args.agent == "fasttd3":
-        from fast_td3 import Actor, Critic
+        if env_type in ["mtbench"]:
+            from fast_td3 import MultiTaskActor, MultiTaskCritic
+
+            actor_cls = MultiTaskActor
+            critic_cls = MultiTaskCritic
+        else:
+            from fast_td3 import Actor, Critic
+
+            actor_cls = Actor
+            critic_cls = Critic
 
         print("Using FastTD3")
 
     elif args.agent == "fasttd3_simbav2":
-        from fast_td3_simbav2 import Actor, Critic
+        if env_type in ["mtbench"]:
+            from fast_td3_simbav2 import MultiTaskActor, MultiTaskCritic
+
+            actor_cls = MultiTaskActor
+            critic_cls = MultiTaskCritic
+        else:
+            from fast_td3_simbav2 import Actor, Critic
+
+            actor_cls = Actor
 
         print("Using FastTD3 + SimbaV2")
         actor_kwargs.pop("init_scale")
@@ -218,30 +268,32 @@ def main():
     else:
         raise ValueError(f"Agent {args.agent} not supported")
 
-    actor = Actor(**actor_kwargs)
+    actor = actor_cls(**actor_kwargs)
 
-    ##REVIEW - 分离策略，在与环境交互以收集数据时，生成动作，同时不记录梯度信息
-    actor_detach = Actor(**actor_kwargs)
+    if env_type in ["mtbench"]:
+        # Python 3.8 doesn't support 'from_module' in tensordict
+        policy = actor.explore
+    else:
+        from tensordict import from_module
 
-    ##NOTE -  将参数复制到actor_detach，.data 这个操作会获取参数的底层张量，但不会复制它们的计算图历史（梯度信息）
-    from_module(actor).data.to_module(actor_detach)
+        actor_detach = actor_cls(**actor_kwargs)
+        # Copy params to actor_detach without grad
+        from_module(actor).data.to_module(actor_detach)
+        policy = actor_detach.explore
 
-    ##NOTE -  policy什么用？
-    policy = actor_detach.explore
-
-    qnet = Critic(**critic_kwargs)
-    qnet_target = Critic(**critic_kwargs)
+    qnet = critic_cls(**critic_kwargs)
+    qnet_target = critic_cls(**critic_kwargs)
     qnet_target.load_state_dict(qnet.state_dict())
 
     ##NOTE - 使用AdamW优化器，和Adam比，其在优化时会对权重衰减进行更好的处理
     q_optimizer = optim.AdamW(
         list(qnet.parameters()),
-        lr=args.critic_learning_rate,
+        lr=torch.tensor(args.critic_learning_rate, device=device),
         weight_decay=args.weight_decay,
     )
     actor_optimizer = optim.AdamW(
         list(actor.parameters()),
-        lr=args.actor_learning_rate,
+        lr=torch.tensor(args.actor_learning_rate, device=device),
         weight_decay=args.weight_decay,
     )
 
@@ -262,12 +314,12 @@ def main():
     q_scheduler = optim.lr_scheduler.CosineAnnealingLR(
         q_optimizer,
         T_max=args.total_timesteps,
-        eta_min=args.critic_learning_rate_end,  # 衰减至初始LR的10％
+        eta_min=torch.tensor(args.critic_learning_rate_end, device=device),
     )
     actor_scheduler = optim.lr_scheduler.CosineAnnealingLR(
         actor_optimizer,
         T_max=args.total_timesteps,
-        eta_min=args.actor_learning_rate_end,  # 衰减至初始LR的10％
+        eta_min=torch.tensor(args.actor_learning_rate_end, device=device),
     )
 
     rb = SimpleReplayBuffer(
@@ -299,8 +351,8 @@ def main():
         else:
             obs = eval_envs.reset()
 
-        # 运行固定数量的步骤
-        for _ in range(eval_envs.max_episode_steps):
+        # Run for a fixed number of steps
+        for i in range(eval_envs.max_episode_steps):
             with (
                 torch.no_grad(),
                 autocast(
@@ -310,7 +362,13 @@ def main():
                 obs = normalize_obs(obs)
                 actions = actor(obs)
 
-            next_obs, rewards, dones, _ = eval_envs.step(actions.float())
+            next_obs, rewards, dones, infos = eval_envs.step(actions.float())
+
+            if env_type == "mtbench":
+                # We only report success rate in MTBench evaluation
+                rewards = (
+                    infos["episode"]["success"].float() if "episode" in infos else 0.0
+                )
 
             ##NOTE - 统计每个回合的奖励和长度
             """
@@ -329,6 +387,8 @@ def main():
             episode_lengths = torch.where(
                 ~done_masks, episode_lengths + 1, episode_lengths
             )
+            if env_type == "mtbench" and "episode" in infos:
+                dones = dones | infos["episode"]["success"]
             done_masks = torch.logical_or(done_masks, dones)
             if done_masks.all():
                 break
@@ -346,9 +406,9 @@ def main():
         if env_type == "humanoid_bench":
             obs = render_env.reset()
             renders = [render_env.render()]
-        elif env_type == "isaaclab":
+        elif env_type in ["isaaclab", "mtbench"]:
             raise NotImplementedError(
-                "We don't support rendering for IsaacLab environments"
+                "We don't support rendering for IsaacLab and MTBench environments"
             )
         else:
             obs = render_env.reset()
@@ -471,6 +531,7 @@ def main():
         )
         scaler.step(q_optimizer)
         scaler.update()
+        q_scheduler.step()
 
         logs_dict["critic_grad_norm"] = critic_grad_norm.detach()
         logs_dict["qf_loss"] = qf_loss.detach()
@@ -507,6 +568,7 @@ def main():
         )
         scaler.step(actor_optimizer)
         scaler.update()
+        actor_scheduler.step()
         logs_dict["actor_grad_norm"] = actor_grad_norm.detach()
         logs_dict["actor_loss"] = actor_loss.detach()
         return logs_dict
@@ -580,8 +642,13 @@ def main():
         next_obs, rewards, dones, infos = envs.step(actions.float())
         truncations = infos["time_outs"]
 
-        if args.reward_normalization:  # 奖励归一化，不推荐，导致不稳定
-            update_stats(rewards, dones.float())
+        if args.reward_normalization:
+            if env_type == "mtbench":
+                task_ids_one_hot = obs[..., -envs.num_tasks :]
+                task_indices = torch.argmax(task_ids_one_hot, dim=1)
+                update_stats(rewards, dones.float(), task_ids=task_indices)
+            else:
+                update_stats(rewards, dones.float())
 
         if envs.asymmetric_obs:  # 特权状态
             next_critic_obs = infos["observations"]["critic"]
@@ -634,7 +701,15 @@ def main():
                     data["next"]["observations"]
                 )
                 raw_rewards = data["next"]["rewards"]
-                data["next"]["rewards"] = normalize_reward(raw_rewards)
+                if env_type in ["mtbench"] and args.reward_normalization:
+                    # Multi-task reward normalization
+                    task_ids_one_hot = data["observations"][..., -envs.num_tasks :]
+                    task_indices = torch.argmax(task_ids_one_hot, dim=1)
+                    data["next"]["rewards"] = normalize_reward(
+                        raw_rewards, task_ids=task_indices
+                    )
+                else:
+                    data["next"]["rewards"] = normalize_reward(raw_rewards)
                 if envs.asymmetric_obs:
                     data["critic_observations"] = normalize_critic_obs(
                         data["critic_observations"]
@@ -680,8 +755,8 @@ def main():
                     if args.eval_interval > 0 and global_step % args.eval_interval == 0:
                         print(f"Evaluating at global step {global_step}")
                         eval_avg_return, eval_avg_length = evaluate()
-                        if env_type in ["humanoid_bench", "isaaclab"]:
-                            ## NOTE: 评估性能的临时方法，但确实有效
+                        if env_type in ["humanoid_bench", "isaaclab", "mtbench"]:
+                            # NOTE: Hacky way of evaluating performance, but just works
                             obs = envs.reset()
                         logs["eval_avg_return"] = eval_avg_return
                         logs["eval_avg_length"] = eval_avg_length
@@ -732,10 +807,6 @@ def main():
                     args,
                     f"models/{run_name}_{global_step}.pt",
                 )
-
-            # 更新学习率
-            q_scheduler.step()
-            actor_scheduler.step()
 
         global_step += 1
         pbar.update(1)

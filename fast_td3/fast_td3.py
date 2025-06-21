@@ -177,6 +177,7 @@ class Critic(nn.Module):
         self.register_buffer(
             "q_support", torch.linspace(v_min, v_max, num_atoms, device=device)
         )
+        self.device = device
 
     def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         return self.qnet1(obs, actions), self.qnet2(obs, actions)
@@ -272,6 +273,7 @@ class Actor(nn.Module):
         self.register_buffer("std_min", torch.as_tensor(std_min, device=device))
         self.register_buffer("std_max", torch.as_tensor(std_max, device=device))
         self.n_envs = num_envs
+        self.device = device
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         x = obs
@@ -307,3 +309,51 @@ class Actor(nn.Module):
 
         ##NOTE - 不裁剪的好处：大多数标准的强化学习环境（如 Gymnasium/MuJoCo）在接收到一个动作后，会自动将该动作裁剪到其合法的动作空间范围内。未裁剪的、带有“意图”的动作（即使这个动作在物理上无法被完全执行），我们可以让 Critic 学习到一个更平滑、信息更丰富的 Q 函数。这个更准确的 Q 函数反过来又能为 Actor 的更新提供更有效的梯度，帮助策略更快地收敛到最优。
         return act + noise
+
+
+class MultiTaskActor(Actor):
+    def __init__(self, num_tasks: int, task_embedding_dim: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_tasks = num_tasks
+        self.task_embedding_dim = task_embedding_dim
+        self.task_embedding = nn.Embedding(
+            num_tasks, task_embedding_dim, max_norm=1.0, device=self.device
+        )
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        task_ids_one_hot = obs[..., -self.num_tasks :]
+        task_indices = torch.argmax(task_ids_one_hot, dim=1)
+        task_embeddings = self.task_embedding(task_indices)
+        obs = torch.cat([obs[..., : -self.num_tasks], task_embeddings], dim=-1)
+        return super().forward(obs)
+
+
+class MultiTaskCritic(Critic):
+    def __init__(self, num_tasks: int, task_embedding_dim: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_tasks = num_tasks
+        self.task_embedding_dim = task_embedding_dim
+        self.task_embedding = nn.Embedding(
+            num_tasks, task_embedding_dim, max_norm=1.0, device=self.device
+        )
+
+    def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        task_ids_one_hot = obs[..., -self.num_tasks :]
+        task_indices = torch.argmax(task_ids_one_hot, dim=1)
+        task_embeddings = self.task_embedding(task_indices)
+        obs = torch.cat([obs[..., : -self.num_tasks], task_embeddings], dim=-1)
+        return super().forward(obs, actions)
+
+    def projection(
+        self,
+        obs: torch.Tensor,
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        bootstrap: torch.Tensor,
+        discount: float,
+    ) -> torch.Tensor:
+        task_ids_one_hot = obs[..., -self.num_tasks :]
+        task_indices = torch.argmax(task_ids_one_hot, dim=1)
+        task_embeddings = self.task_embedding(task_indices)
+        obs = torch.cat([obs[..., : -self.num_tasks], task_embeddings], dim=-1)
+        return super().projection(obs, actions, rewards, bootstrap, discount)

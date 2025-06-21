@@ -96,7 +96,7 @@ class BaseArgs:
     obs_normalization: bool = True
     """whether to enable observation normalization"""
     reward_normalization: bool = False
-    """whether to enable reward normalization (Not recommended for now, it's unstable.)"""
+    """whether to enable reward normalization"""
     max_grad_norm: float = 0.0
     """the maximum gradient norm"""
     amp: bool = True
@@ -114,6 +114,8 @@ class BaseArgs:
     """(Playground only) Use tuned reward for G1"""
     action_bounds: float = 1.0
     """(IsaacLab only) the bounds of the action space (-action_bounds, action_bounds)"""
+    task_embedding_dim: int = 32
+    """the dimension of the task embedding"""
 
     weight_decay: float = 0.1
     """the weight decay of the optimizer"""
@@ -170,6 +172,9 @@ def get_args():
         "Isaac-Velocity-Rough-G1-v0": IsaacVelocityRoughG1Args,
         "Isaac-Repose-Cube-Allegro-Direct-v0": IsaacReposeCubeAllegroDirectArgs,
         "Isaac-Repose-Cube-Shadow-Direct-v0": IsaacReposeCubeShadowDirectArgs,
+        # MTBench
+        "MTBench-meta-world-v2-mt10": MetaWorldMT10Args,
+        "MTBench-meta-world-v2-mt50": MetaWorldMT50Args,
     }
     # If the provided env_name has a specific Args class, use it
     if base_args.env_name in env_to_args_class:
@@ -184,6 +189,9 @@ def get_args():
     elif base_args.env_name.startswith("Isaac-"):
         # IsaacLab
         specific_args = tyro.cli(IsaacLabArgs)
+    elif base_args.env_name.startswith("MTBench-"):
+        # MTBench
+        specific_args = tyro.cli(MTBenchArgs)
     else:
         # MuJoCo Playground
         specific_args = tyro.cli(MuJoCoPlaygroundArgs)
@@ -279,6 +287,38 @@ class MuJoCoPlaygroundArgs(BaseArgs):
     num_envs: int = 1024
     num_eval_envs: int = 1024
     gamma: float = 0.97
+
+
+@dataclass
+class MTBenchArgs(BaseArgs):
+    # Default hyperparameters for MTBench
+    reward_normalization: bool = True
+    v_min: float = -10.0
+    v_max: float = 10.0
+    buffer_size: int = 2048  # 2K is usually enough for MTBench
+    num_envs: int = 4096
+    num_eval_envs: int = 4096
+    gamma: float = 0.99
+    num_steps: int = 8
+
+
+@dataclass
+class MetaWorldMT10Args(MTBenchArgs):
+    # This config achieves 97 ~ 98% success rate within 10k steps (15-20 mins on A100)
+    env_name: str = "MTBench-meta-world-v2-mt10"
+    num_envs: int = 4096
+    num_eval_envs: int = 4096
+    num_steps: int = 8
+
+
+@dataclass
+class MetaWorldMT50Args(MTBenchArgs):
+    # FastTD3 + SimbaV2 achieves >90% success rate within 20k steps (80 mins on A100)
+    # Performance further improves with more training steps, slowly.
+    env_name: str = "MTBench-meta-world-v2-mt50"
+    num_envs: int = 8192
+    num_eval_envs: int = 8192
+    num_steps: int = 8
 
 
 @dataclass
