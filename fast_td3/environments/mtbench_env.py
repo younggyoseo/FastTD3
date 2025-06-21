@@ -90,6 +90,7 @@ class MTBenchEnv:
             "We don't support rendering for IsaacLab environments"
         )
 
+
 MTBENCH_MW2_CONFIG = {
     "name": "meta-world-v2",
     "physics_engine": "physx",

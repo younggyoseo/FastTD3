@@ -290,20 +290,20 @@ class MuJoCoPlaygroundArgs(BaseArgs):
 
 @dataclass
 class MTBenchArgs(BaseArgs):
-    # Default hyperparameters for many of Playground environments
+    # Default hyperparameters for MTBench
+    reward_normalization: bool = True
     v_min: float = -10.0
     v_max: float = 10.0
-    buffer_size: int = (
-        1024 * 10
-    )  # Can be increased, but likely to be already solved within 10k steps
+    buffer_size: int = 2048  # 2K is usually enough for MTBench
     num_envs: int = 4096
     num_eval_envs: int = 4096
-    gamma: float = 0.97
-    reward_normalization: bool = True
+    gamma: float = 0.99
+    num_steps: int = 8
 
 
 @dataclass
 class MetaWorldMT10Args(MTBenchArgs):
+    # This config achieves 97 ~ 98% success rate within 10k steps (15-20 mins on A100)
     env_name: str = "MTBench-meta-world-v2-mt10"
     num_envs: int = 4096
     num_eval_envs: int = 4096
@@ -312,6 +312,8 @@ class MetaWorldMT10Args(MTBenchArgs):
 
 @dataclass
 class MetaWorldMT50Args(MTBenchArgs):
+    # FastTD3 + SimbaV2 achieves >90% success rate within 20k steps (80 mins on A100)
+    # Performance further improves with more training steps, slowly.
     env_name: str = "MTBench-meta-world-v2-mt50"
     num_envs: int = 8192
     num_eval_envs: int = 8192

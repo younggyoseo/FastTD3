@@ -512,44 +512,6 @@ class RewardNormalizer(nn.Module):
         return self._scale_reward(rewards)
 
 
-def cpu_state(sd):
-    # detach & move to host without locking the compute stream
-    return {k: v.detach().to("cpu", non_blocking=True) for k, v in sd.items()}
-
-
-def save_params(
-    global_step,
-    actor,
-    qnet,
-    qnet_target,
-    obs_normalizer,
-    critic_obs_normalizer,
-    args,
-    save_path,
-):
-    """Save model parameters and training configuration to disk."""
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    save_dict = {
-        "actor_state_dict": cpu_state(actor.state_dict()),
-        "qnet_state_dict": cpu_state(qnet.state_dict()),
-        "qnet_target_state_dict": cpu_state(qnet_target.state_dict()),
-        "obs_normalizer_state": (
-            cpu_state(obs_normalizer.state_dict())
-            if hasattr(obs_normalizer, "state_dict")
-            else None
-        ),
-        "critic_obs_normalizer_state": (
-            cpu_state(critic_obs_normalizer.state_dict())
-            if hasattr(critic_obs_normalizer, "state_dict")
-            else None
-        ),
-        "args": vars(args),  # Save all arguments
-        "global_step": global_step,
-    }
-    torch.save(save_dict, save_path, _use_new_zipfile_serialization=True)
-    print(f"Saved parameters and configuration to {save_path}")
-
-
 class PerTaskEmpiricalNormalization(nn.Module):
     """Normalize mean and variance of values based on empirical values for each task."""
 
@@ -754,3 +716,41 @@ class PerTaskRewardNormalizer(nn.Module):
             task_ids (torch.Tensor): Task indices, shape [num_envs].
         """
         return self._scale_reward(rewards, task_ids)
+
+
+def cpu_state(sd):
+    # detach & move to host without locking the compute stream
+    return {k: v.detach().to("cpu", non_blocking=True) for k, v in sd.items()}
+
+
+def save_params(
+    global_step,
+    actor,
+    qnet,
+    qnet_target,
+    obs_normalizer,
+    critic_obs_normalizer,
+    args,
+    save_path,
+):
+    """Save model parameters and training configuration to disk."""
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    save_dict = {
+        "actor_state_dict": cpu_state(actor.state_dict()),
+        "qnet_state_dict": cpu_state(qnet.state_dict()),
+        "qnet_target_state_dict": cpu_state(qnet_target.state_dict()),
+        "obs_normalizer_state": (
+            cpu_state(obs_normalizer.state_dict())
+            if hasattr(obs_normalizer, "state_dict")
+            else None
+        ),
+        "critic_obs_normalizer_state": (
+            cpu_state(critic_obs_normalizer.state_dict())
+            if hasattr(critic_obs_normalizer, "state_dict")
+            else None
+        ),
+        "args": vars(args),  # Save all arguments
+        "global_step": global_step,
+    }
+    torch.save(save_dict, save_path, _use_new_zipfile_serialization=True)
+    print(f"Saved parameters and configuration to {save_path}")
