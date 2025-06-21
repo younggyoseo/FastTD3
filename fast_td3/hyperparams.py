@@ -26,6 +26,8 @@ class BaseArgs:
     """whether to use wandb"""
     checkpoint_path: str = None
     """the path to the checkpoint file"""
+    output_dir: str = None
+    """the path to the output directory"""
     num_envs: int = 128
     """the number of environments to run in parallel"""
     num_eval_envs: int = 128

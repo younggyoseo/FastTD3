@@ -7,6 +7,9 @@ record.ipynb
 *.pyc
 .ipynb_checkpoints
 fast_td3.egg-info/
+outputs/
+*.err
+*.out
 *.sif
 *.png
 *.jpg
