@@ -84,7 +84,7 @@ pip install -r requirements/requirements.txt
 ```
 
 ### Environment for MTBench
-MTBench does not support Humanoid tasks, but support useful multi-task RL benchmark with Franka and Go1.
+MTBench does not support humanoid experiments, but is a useful multi-task benchmark with massive parallel simulation. This could be useful for users who want to use FastTD3 for their multi-task experiments.
 
 ```bash
 conda create -n fasttd3_mtbench -y python=3.8  # Note python version
@@ -361,6 +361,18 @@ Following the [LeanRL](https://github.com/pytorch-labs/LeanRL)'s recommendation,
    number={6},
    pages={3740-3747},
    doi={10.1109/LRA.2023.3270034}
+}
+```
+
+### MTBench
+```bibtex
+@inproceedings{
+joshi2025benchmarking,
+title={Benchmarking Massively Parallelized Multi-Task Reinforcement Learning for Robotics Tasks},
+author={Viraj Joshi and Zifan Xu and Bo Liu and Peter Stone and Amy Zhang},
+booktitle={Reinforcement Learning Conference},
+year={2025},
+url={https://openreview.net/forum?id=z0MM0y20I2}
 }
 ```
 
