@@ -26,6 +26,8 @@ class BaseArgs:
     """whether to use wandb"""
     checkpoint_path: str = None
     """the path to the checkpoint file"""
+    output_dir: str = None
+    """the path to the output directory"""
     num_envs: int = 128
     """the number of environments to run in parallel"""
     num_eval_envs: int = 128
@@ -271,25 +273,25 @@ class MuJoCoPlaygroundArgs(BaseArgs):
 @dataclass
 class G1JoystickFlatTerrainArgs(MuJoCoPlaygroundArgs):
     env_name: str = "G1JoystickFlatTerrain"
-    total_timesteps: int = 100000
+    total_timesteps: int = 1000000
 
 
 @dataclass
 class G1JoystickRoughTerrainArgs(MuJoCoPlaygroundArgs):
     env_name: str = "G1JoystickRoughTerrain"
-    total_timesteps: int = 100000
+    total_timesteps: int = 1000000
 
 
 @dataclass
 class T1JoystickFlatTerrainArgs(MuJoCoPlaygroundArgs):
     env_name: str = "T1JoystickFlatTerrain"
-    total_timesteps: int = 100000
+    total_timesteps: int = 1000000
 
 
 @dataclass
 class T1JoystickRoughTerrainArgs(MuJoCoPlaygroundArgs):
     env_name: str = "T1JoystickRoughTerrain"
-    total_timesteps: int = 100000
+    total_timesteps: int = 1000000
 
 
 @dataclass

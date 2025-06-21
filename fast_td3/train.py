@@ -9,6 +9,7 @@ else:
     os.environ["MUJOCO_GL"] = "glfw"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["JAX_DEFAULT_MATMUL_PRECISION"] = "highest"
+os.environ['XLA_FLAGS'] = "--xla_gpu_triton_gemm_any=True" # Enable triton gemm
 
 import random
 import time
@@ -592,7 +593,7 @@ def main():
                     obs_normalizer,
                     critic_obs_normalizer,
                     args,
-                    f"models/{run_name}_{global_step}.pt",
+                    f"{args.output_dir}/{run_name}_{global_step}.pt",
                 )
 
         global_step += 1
@@ -606,7 +607,7 @@ def main():
         obs_normalizer,
         critic_obs_normalizer,
         args,
-        f"models/{run_name}_final.pt",
+        f"{args.output_dir}/{run_name}_final.pt",
     )
 
 
