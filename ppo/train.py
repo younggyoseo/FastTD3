@@ -6,17 +6,33 @@ from torch.nn import functional as F
 import time
 from collections import deque
 from tqdm import tqdm
+import numpy as np
+import jax.numpy as jnp
 
 from fast_td3.environments.mujoco_playground_env import make_env
 from fast_td3.fast_td3_utils import EmpiricalNormalization
 from .ppo import ActorCritic
 from .ppo_utils import RolloutBuffer
 
+import os
+import sys
+
+os.environ["TORCHDYNAMO_INLINE_INBUILT_NN_MODULES"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+if sys.platform != "darwin":
+    os.environ["MUJOCO_GL"] = "egl"
+else:
+    os.environ["MUJOCO_GL"] = "glfw"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["JAX_DEFAULT_MATMUL_PRECISION"] = "highest"
+os.environ['XLA_FLAGS'] = "--xla_gpu_triton_gemm_any=True" # Enable triton gemm
+
 
 def make_parser():
     parser = argparse.ArgumentParser(description="Train PPO")
-    parser.add_argument("--env_name", type=str, default="CheetahRun")
-    parser.add_argument("--total-timesteps", type=int, default=20000000)
+    parser.add_argument("--env_name", type=str, default="T1JoystickFlatTerrain")
+    parser.add_argument("--env_type", type=str, default="mujoco_playground")
+    parser.add_argument("--total-timesteps", type=int, default=200000000)
     parser.add_argument("--num-envs", type=int, default=1024)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -25,18 +41,38 @@ def make_parser():
     parser.add_argument("--ent-coef", type=float, default=0.0)
     parser.add_argument("--vf-coef", type=float, default=0.5)
     parser.add_argument("--update-epochs", type=int, default=4)
-    parser.add_argument("--batch-size", type=int, default=1024)
-    parser.add_argument("--rollout-length", type=int, default=1024)
+    parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument("--rollout-length", type=int, default=256)
     parser.add_argument("--hidden-dim", type=int, default=256)
     parser.add_argument("--log-interval", type=int, default=1000, help="Log every N timesteps")
     parser.add_argument("--eval-interval", type=int, default=10000, help="Evaluate every N timesteps")
     parser.add_argument("--num-eval-envs", type=int, default=10, help="Number of evaluation environments")
+    parser.add_argument("--use-wandb", action="store_true", help="Use wandb for logging")
+    parser.add_argument("--project", type=str, default="rl_scratch", help="Wandb project name")
+    parser.add_argument("--exp-name", type=str, default="ppo", help="Experiment name")
+    parser.add_argument("--seed", type=int, default=1, help="Random seed")
+    parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Maximum gradient norm for clipping")
     return parser
 
 
 def main():
     args = make_parser().parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Set random seeds
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    
+    # Initialize wandb if requested
+    if args.use_wandb:
+        import wandb
+        run_name = f"{args.env_name}__{args.exp_name}__{args.seed}"
+        wandb.init(
+            project=args.project,
+            name=run_name,
+            config=vars(args),
+            save_code=True,
+        )
     
     print("Starting PPO training")
     print(f"Device: {device}")
@@ -48,13 +84,14 @@ def main():
     print(f"Learning rate: {args.learning_rate}")
     print(f"Evaluation interval: {args.eval_interval}")
     print(f"Number of eval environments: {args.num_eval_envs}")
+    print(f"Using wandb: {args.use_wandb}")
     print("-" * 60)
     
     # Create training environments
-    envs, _, _ = make_env(args.env_name, seed=0, num_envs=args.num_envs, num_eval_envs=1, device_rank=0)
+    envs, _, _ = make_env(args.env_name, seed=args.seed, num_envs=args.num_envs, num_eval_envs=1, device_rank=0)
     
     # Create separate evaluation environments
-    eval_envs, _, _ = make_env(args.env_name, seed=42, num_envs=args.num_eval_envs, num_eval_envs=1, device_rank=0)
+    eval_envs, _, render_env = make_env(args.env_name, seed=args.seed+42, num_envs=args.num_eval_envs, num_eval_envs=1, device_rank=0)
     
     obs = envs.reset()
     n_obs = envs.num_obs if isinstance(envs.num_obs, int) else envs.num_obs[0]
@@ -64,7 +101,7 @@ def main():
     optimizer = optim.Adam(policy.parameters(), lr=args.learning_rate)
     normalizer = EmpiricalNormalization(shape=n_obs, device=device)
 
-    buffer = RolloutBuffer(args.rollout_length * args.num_envs, n_obs, n_act, device=device)
+    buffer = RolloutBuffer(args.rollout_length, args.num_envs, n_obs, n_act, device=device)
     
     # Progress tracking variables
     global_step = 0
@@ -97,7 +134,8 @@ def main():
         obs = eval_envs.reset()
 
         # Run for a fixed number of steps
-        for _ in range(eval_envs.max_episode_steps):
+        max_steps = getattr(eval_envs, 'max_episode_length', getattr(eval_envs, 'max_episode_steps', 1000))
+        for _ in range(max_steps):
             with torch.no_grad():
                 norm_obs = normalizer(obs)
                 action, _, _ = policy.act(norm_obs)
@@ -117,11 +155,82 @@ def main():
         normalizer.train()
         return episode_returns.mean().item(), episode_lengths.mean().item()
     
+    def render_with_rollout():
+        normalizer.eval()
+        env_type = args.env_type
+
+        # Quick rollout for rendering
+        if env_type == "humanoid_bench":
+            obs = render_env.reset()
+            renders = [render_env.render()]
+        elif env_type == "isaaclab":
+            raise NotImplementedError(
+                "We don't support rendering for IsaacLab environments"
+            )
+        else:
+            obs = render_env.reset()
+            render_env.state.info["command"] = jnp.array([[1.0, 0.0, 0.0]])
+            renders = [render_env.state]
+        for i in range(render_env.max_episode_steps):
+            with torch.no_grad():
+                norm_obs = normalizer(obs)
+                action, _, _ = policy.act(norm_obs)
+            next_obs, _, done, _ = render_env.step(action)
+            if env_type == "mujoco_playground":
+                render_env.state.info["command"] = jnp.array([[1.0, 0.0, 0.0]])
+            if i % 2 == 0:
+                if env_type == "humanoid_bench":
+                    renders.append(render_env.render())
+                else:
+                    renders.append(render_env.state)
+            if done.any():
+                break
+            obs = next_obs
+
+        if env_type == "mujoco_playground":
+            renders = render_env.render_trajectory(renders)
+
+        normalizer.train()
+        return renders
+
     print("Starting training loop...")
     
     # Main training loop with progress bar
     with tqdm(total=args.total_timesteps, desc="Training Progress", unit="steps") as pbar:
         while global_step < args.total_timesteps:
+            # Evaluation phase - run before data collection
+            eval_avg_return = None
+            eval_avg_length = None
+            if args.eval_interval > 0 and global_step % args.eval_interval == 0:
+                print(f"\nEvaluating at global step {global_step}")
+                eval_avg_return, eval_avg_length = evaluate()
+                eval_returns.append(eval_avg_return)
+                eval_lengths.append(eval_avg_length)
+                print(f"*** Evaluation - Avg Return: {eval_avg_return:.3f}, Avg Length: {eval_avg_length:.1f}****")
+                
+                # Render video if requested
+                # print(f"Rendering video at global step {global_step}")
+                # renders = render_with_rollout()
+                if args.use_wandb:
+                #     wandb.log(
+                #         {
+                #             "render_video": wandb.Video(
+                #                 np.array(renders).transpose(0, 3, 1, 2),  # Convert to (T, C, H, W) format
+                #                 fps=30,
+                #                 format="gif",
+                #             )
+                #         },
+                #         step=global_step,
+                #     )
+                    # log the evaluation results
+                    wandb.log(
+                        {
+                            "eval_avg_return": eval_avg_return,
+                            "eval_avg_length": eval_avg_length,
+                        },
+                        step=global_step,
+                    )
+            
             # Data collection phase
             rollout_start_time = time.time()
             for step in tqdm(range(args.rollout_length), desc="Data Collection", leave=False):
@@ -129,17 +238,15 @@ def main():
                 with torch.no_grad():
                     action, logp, value = policy.act(norm_obs)
                 next_obs, reward, done, _ = envs.step(action)
-                
                 # Add each environment's transition to buffer
-                for env_idx in range(args.num_envs):
-                    buffer.add(
-                        obs[env_idx], 
-                        action[env_idx], 
-                        logp[env_idx], 
-                        reward[env_idx], 
-                        done[env_idx], 
-                        value[env_idx]
-                    )
+                buffer.add(
+                    obs, 
+                    action, 
+                    logp, 
+                    reward, 
+                    done, 
+                    value
+                )
                 
                 obs = next_obs
                 global_step += args.num_envs  # Update by number of environments
@@ -164,9 +271,8 @@ def main():
             # Compute advantages - handle each environment separately
             with torch.no_grad():
                 last_values = policy.value(normalizer(obs))  # Shape: [num_envs]
-            
             # Compute advantages for each environment's data separately
-            buffer.compute_returns_and_advantage(last_values.mean().item(), args.gamma, args.gae_lambda)
+            buffer.compute_returns_and_advantage(last_values, args.gamma, args.gae_lambda, args.num_envs)
 
             # Policy update phase
             update_start_time = time.time()
@@ -178,7 +284,14 @@ def main():
             for epoch in tqdm(range(args.update_epochs), desc="Policy Updates", leave=False):
                 for b_obs, b_actions, b_logp, b_returns, b_adv in buffer.get_batches(args.batch_size):
                     dist = policy.get_dist(normalizer(b_obs))
-                    new_logp = dist.log_prob(b_actions).sum(-1)
+                    
+                    # Since b_actions are tanh-transformed, we need to inverse them
+                    # and compute log prob with Jacobian correction
+                    raw_actions = torch.atanh(torch.clamp(b_actions, -0.999, 0.999))
+                    new_logp = dist.log_prob(raw_actions).sum(-1)
+                    # Apply tanh Jacobian correction
+                    new_logp = new_logp - (2 * (torch.log(torch.tensor(2.0)) - raw_actions - torch.nn.functional.softplus(-2 * raw_actions))).sum(-1)
+                    
                     ratio = (new_logp - b_logp).exp()
                     pg_loss1 = -b_adv * ratio
                     pg_loss2 = -b_adv * torch.clamp(ratio, 1 - args.clip_eps, 1 + args.clip_eps)
@@ -191,6 +304,13 @@ def main():
                     loss = policy_loss + args.vf_coef * value_loss - args.ent_coef * entropy
                     optimizer.zero_grad()
                     loss.backward()
+                    
+                    # Apply gradient clipping
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        policy.parameters(),
+                        max_norm=args.max_grad_norm if args.max_grad_norm > 0 else float("inf"),
+                    )
+                    
                     optimizer.step()
                     
                     # Accumulate metrics
@@ -209,16 +329,6 @@ def main():
             
             buffer.clear()
             
-            # Evaluation phase
-            eval_avg_return = None
-            eval_avg_length = None
-            # if args.eval_interval > 0 and global_step % args.eval_interval == 0:
-            print(f"\nEvaluating at global step {global_step}")
-            eval_avg_return, eval_avg_length = evaluate()
-            eval_returns.append(eval_avg_return)
-            eval_lengths.append(eval_avg_length)
-            print(f"Evaluation - Avg Return: {eval_avg_return:.3f}, Avg Length: {eval_avg_length:.1f}")
-            
             # Update main progress bar description with current metrics
             avg_reward = sum(episode_rewards) / len(episode_rewards) if episode_rewards else 0
             avg_policy_loss = total_policy_loss / num_updates if num_updates > 0 else 0
@@ -232,33 +342,56 @@ def main():
             )
             
             # Logging
-            if global_step % args.log_interval == 0 or global_step >= args.total_timesteps:
-                current_time = time.time()
-                elapsed_time = current_time - start_time
-                time_since_last_log = current_time - last_log_time
+            # if global_step % args.log_interval == 0 or global_step >= args.total_timesteps:
+            current_time = time.time()
+            elapsed_time = current_time - start_time
+            time_since_last_log = current_time - last_log_time
+            
+            # Calculate metrics
+            avg_length = sum(episode_lengths) / len(episode_lengths) if episode_lengths else 0
+            avg_value_loss = total_value_loss / num_updates if num_updates > 0 else 0
+            avg_entropy = total_entropy / num_updates if num_updates > 0 else 0
+            
+            # Calculate FPS
+            fps = args.log_interval / time_since_last_log if time_since_last_log > 0 else 0
+            
+            print(f"\nTraining Progress - Step {global_step:,}/{args.total_timesteps:,} ({progress:.1f}%)")
+            print(f"Elapsed: {elapsed_time:.1f}s | FPS: {fps:.1f} | Time since last log: {time_since_last_log:.1f}s")
+            print(f"Episode Stats: Avg Reward: {avg_reward:.3f} | Avg Length: {avg_length:.1f} | Episodes: {num_episodes}")
+            print(f"Loss Stats: Policy: {avg_policy_loss:.6f} | Value: {avg_value_loss:.6f} | Entropy: {avg_entropy:.6f}")
+            print(f"Timing: Rollout: {rollout_time:.3f}s | Update: {update_time:.3f}s")
+            print(f"Epoch {epoch+1}/{args.update_epochs} | Updates: {epoch_updates}")
+            
+            # Add evaluation results to logging if available
+            if eval_avg_return is not None:
+                print(f"Evaluation: Avg Return: {eval_avg_return:.3f} | Avg Length: {eval_avg_length:.1f}")
+            
+            print("-" * 60)
+            
+            # Log to wandb if enabled
+            if args.use_wandb:
+                logs = {
+                    "speed": fps,
+                    "frame": global_step * args.num_envs,
+                    "avg_reward": avg_reward,
+                    "avg_length": avg_length,
+                    "policy_loss": avg_policy_loss,
+                    "value_loss": avg_value_loss,
+                    "entropy": avg_entropy,
+                    "num_episodes": num_episodes,
+                    "rollout_time": rollout_time,
+                    "update_time": update_time,
+                    "grad_norm": grad_norm.item() if 'grad_norm' in locals() else 0.0,
+                }
                 
-                # Calculate metrics
-                avg_length = sum(episode_lengths) / len(episode_lengths) if episode_lengths else 0
-                avg_value_loss = total_value_loss / num_updates if num_updates > 0 else 0
-                avg_entropy = total_entropy / num_updates if num_updates > 0 else 0
-                
-                # Calculate FPS
-                fps = args.log_interval / time_since_last_log if time_since_last_log > 0 else 0
-                
-                print(f"\nTraining Progress - Step {global_step:,}/{args.total_timesteps:,} ({progress:.1f}%)")
-                print(f"Elapsed: {elapsed_time:.1f}s | FPS: {fps:.1f} | Time since last log: {time_since_last_log:.1f}s")
-                print(f"Episode Stats: Avg Reward: {avg_reward:.3f} | Avg Length: {avg_length:.1f} | Episodes: {num_episodes}")
-                print(f"Loss Stats: Policy: {avg_policy_loss:.6f} | Value: {avg_value_loss:.6f} | Entropy: {avg_entropy:.6f}")
-                print(f"Timing: Rollout: {rollout_time:.3f}s | Update: {update_time:.3f}s")
-                print(f"Epoch {epoch+1}/{args.update_epochs} | Updates: {epoch_updates}")
-                
-                # Add evaluation results to logging if available
+                # Add evaluation metrics if available
                 if eval_avg_return is not None:
-                    print(f"Evaluation: Avg Return: {eval_avg_return:.3f} | Avg Length: {eval_avg_length:.1f}")
+                    logs["eval_avg_return"] = eval_avg_return
+                    logs["eval_avg_length"] = eval_avg_length
                 
-                print("-" * 60)
-                
-                last_log_time = current_time
+                wandb.log(logs, step=global_step)
+            
+            last_log_time = current_time
     
     total_time = time.time() - start_time
     print(f"\nTraining completed!")
@@ -270,6 +403,16 @@ def main():
     if eval_returns:
         print(f"Final evaluation return: {eval_returns[-1]:.3f}")
         print(f"Best evaluation return: {max(eval_returns):.3f}")
+    
+    # Log final results to wandb
+    if args.use_wandb:
+        wandb.log({
+            "final_eval_return": eval_returns[-1] if eval_returns else 0,
+            "best_eval_return": max(eval_returns) if eval_returns else 0,
+            "total_training_time": total_time,
+            "final_fps": global_step/total_time,
+        }, step=global_step)
+        wandb.finish()
 
 
 if __name__ == "__main__":

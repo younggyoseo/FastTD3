@@ -1,59 +1,103 @@
 import torch
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
-
 class RolloutBuffer:
-    """Buffer for storing environment rollouts used in PPO."""
+    """
+    Stores one rollout of length `T` collected from `N` parallel envs.
 
-    def __init__(self, buffer_size: int, observation_dim: int, action_dim: int, device=None):
-        self.obs = torch.zeros(buffer_size, observation_dim, device=device)
-        self.actions = torch.zeros(buffer_size, action_dim, device=device)
-        self.logprobs = torch.zeros(buffer_size, device=device)
-        self.rewards = torch.zeros(buffer_size, device=device)
-        self.dones = torch.zeros(buffer_size, device=device)
-        self.values = torch.zeros(buffer_size, device=device)
-        self.advantages = torch.zeros(buffer_size, device=device)
-        self.returns = torch.zeros(buffer_size, device=device)
-        self.ptr = 0
-        self.max_size = buffer_size
-        self.device = device
+    Data layout is   (T, N, ·)   which makes the GAE recursion easy.
+    """
 
-    def add(self, obs, action, logprob, reward, done, value):
-        if self.ptr >= self.max_size:
+    def __init__(self,
+                 rollout_length: int,
+                 num_envs: int,
+                 obs_dim: int,
+                 act_dim: int,
+                 device=None):
+        self.T, self.N = rollout_length, num_envs
+        shape = (rollout_length, num_envs)
+
+        self.obs        = torch.zeros(*shape,  obs_dim,  device=device)
+        self.actions    = torch.zeros(*shape,  act_dim,  device=device)
+        self.logprobs   = torch.zeros(*shape,            device=device)
+        self.rewards    = torch.zeros(*shape,            device=device)
+        self.dones      = torch.zeros(*shape,            device=device)
+        self.values     = torch.zeros(*shape,            device=device)
+        self.advantages = torch.zeros(*shape,            device=device)
+        self.returns    = torch.zeros(*shape,            device=device)
+
+        self.ptr_step = 0          # current time index
+
+    # ------------------------------------------------------------------
+    # storing one transition for *every* env at the current time step
+    # ------------------------------------------------------------------
+    def add(self, obs, action, logp, reward, done, value):
+        """
+        Args are tensors of shape (N, ·) coming straight from the vector env.
+        """
+        if self.ptr_step >= self.T:
             return
-        self.obs[self.ptr] = obs
-        self.actions[self.ptr] = action
-        self.logprobs[self.ptr] = logprob
-        self.rewards[self.ptr] = reward
-        self.dones[self.ptr] = done
-        self.values[self.ptr] = value
-        self.ptr += 1
+        self.obs[self.ptr_step]      = obs
+        self.actions[self.ptr_step]  = action
+        self.logprobs[self.ptr_step] = logp
+        self.rewards[self.ptr_step]  = reward
+        self.dones[self.ptr_step]    = done
+        self.values[self.ptr_step]   = value
+        self.ptr_step += 1
 
-    def compute_returns_and_advantage(self, last_value, gamma: float, gae_lambda: float):
-        prev_adv = 0
-        for step in reversed(range(self.ptr)):
-            if step == self.ptr - 1:
-                next_value = last_value
-                next_non_terminal = 1.0 - self.dones[step]
-            else:
-                next_value = self.values[step + 1]
-                next_non_terminal = 1.0 - self.dones[step + 1]
-            delta = self.rewards[step] + gamma * next_value * next_non_terminal - self.values[step]
-            prev_adv = delta + gamma * gae_lambda * next_non_terminal * prev_adv
-            self.advantages[step] = prev_adv
-        self.returns[:self.ptr] = self.advantages[:self.ptr] + self.values[:self.ptr]
-        self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8)
+    # ------------------------------------------------------------------
+    # GAE with a *vector* bootstrap `last_values` (shape N)
+    # ------------------------------------------------------------------
+    def compute_returns_and_advantage(self,
+                                      last_values,      # tensor (N,)
+                                      gamma: float,
+                                      gae_lambda: float,
+                                      num_envs: int):
+        next_values = last_values              # V_{T}
+        next_adv    = torch.zeros(num_envs, device=last_values.device)
 
+        for t in reversed(range(self.ptr_step)):
+            # mask: 0 if episode ended at t+1, else 1
+            next_non_terminal = 1.0 - self.dones[t]
+
+            delta = (self.rewards[t] +
+                     gamma * next_values * next_non_terminal -
+                     self.values[t])
+
+            next_adv = (delta +
+                        gamma * gae_lambda * next_non_terminal * next_adv)
+
+            self.advantages[t] = next_adv
+            next_values        = self.values[t]
+
+        self.returns[:self.ptr_step] = (
+            self.advantages[:self.ptr_step] + self.values[:self.ptr_step]
+        )
+
+        # Advantage normalisation (time × env)
+        flat_adv = self.advantages[:self.ptr_step].reshape(-1)
+        flat_adv = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)
+        self.advantages[:self.ptr_step] = flat_adv.view_as(
+            self.advantages[:self.ptr_step]
+        )
+
+    # ------------------------------------------------------------------
+    # batching — simply flatten (T, N) → (T·N)
+    # ------------------------------------------------------------------
     def get_batches(self, batch_size):
-        sampler = BatchSampler(SubsetRandomSampler(range(self.ptr)), batch_size, drop_last=True)
-        for indices in sampler:
-            yield (
-                self.obs[indices],
-                self.actions[indices],
-                self.logprobs[indices],
-                self.returns[indices],
-                self.advantages[indices],
-            )
+        total = self.ptr_step * self.N
+        sampler = BatchSampler(
+            SubsetRandomSampler(range(total)), batch_size, drop_last=True
+        )
+        # flatten the first two axes for training
+        obs        = self.obs[:self.ptr_step].reshape(total, -1)
+        actions    = self.actions[:self.ptr_step].reshape(total, -1)
+        logprobs   = self.logprobs[:self.ptr_step].reshape(total)
+        returns    = self.returns[:self.ptr_step].reshape(total)
+        advantages = self.advantages[:self.ptr_step].reshape(total)
+        for idx in sampler:
+            yield (obs[idx], actions[idx], logprobs[idx],
+                   returns[idx], advantages[idx])
 
     def clear(self):
-        self.ptr = 0
+        self.ptr_step = 0
