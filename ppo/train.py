@@ -12,8 +12,9 @@ import jax.numpy as jnp
 
 from fast_td3.environments.mujoco_playground_env import make_env
 from fast_td3.fast_td3_utils import EmpiricalNormalization
-from .ppo import ActorCritic
-from .ppo_utils import RolloutBuffer
+from .ppo import ActorCritic, calculate_network_norms
+from .ppo_utils import RolloutBuffer, save_ppo_params
+from tensordict import TensorDict
 
 import os
 import sys
@@ -57,6 +58,8 @@ def make_parser():
     parser.add_argument("--exp-name", type=str, default="ppo", help="Experiment name")
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Maximum gradient norm for clipping")
+    parser.add_argument("--output-dir", type=str, default="logs", help="Directory to save checkpoints")
+    parser.add_argument("--save-interval", type=int, default=0, help="Interval to save model checkpoints")
     parser.add_argument("--compile", action="store_true", help="Use torch.compile for key functions")
     parser.add_argument("--amp", action="store_true", help="Enable automatic mixed precision")
     parser.add_argument(
@@ -82,10 +85,12 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     
+    run_name = f"{args.env_name}__{args.exp_name}__{args.seed}"
+    os.makedirs(args.output_dir, exist_ok=True)
+
     # Initialize wandb if requested
     if args.use_wandb:
         import wandb
-        run_name = f"{args.env_name}__{args.exp_name}__{args.seed}"
         wandb.init(
             project=args.project,
             name=run_name,
@@ -228,6 +233,7 @@ def main():
     # Main training loop with progress bar
     with tqdm(total=args.total_timesteps, desc="Training Progress", unit="steps") as pbar:
         while global_step < args.total_timesteps:
+            logs_dict = TensorDict()
             # Evaluation phase - run before data collection
             eval_avg_return = None
             eval_avg_length = None
@@ -402,27 +408,39 @@ def main():
             
             # Log to wandb if enabled
             if args.use_wandb:
-                logs = {
-                    "speed": fps,
-                    "frame": global_step * args.num_envs,
-                    "avg_reward": avg_reward,
-                    "avg_length": avg_length,
-                    "policy_loss": avg_policy_loss,
-                    "value_loss": avg_value_loss,
-                    "entropy": avg_entropy,
-                    "num_episodes": num_episodes,
-                    "rollout_time": rollout_time,
-                    "update_time": update_time,
-                    "grad_norm": grad_norm.item() if 'grad_norm' in locals() else 0.0,
-                }
-                
-                # Add evaluation metrics if available
+                logs_dict["avg_reward"] = avg_reward
+                logs_dict["avg_length"] = avg_length
+                logs_dict["policy_loss"] = avg_policy_loss
+                logs_dict["value_loss"] = avg_value_loss
+                logs_dict["entropy"] = avg_entropy
+                logs_dict["num_episodes"] = num_episodes
+                logs_dict["rollout_time"] = rollout_time
+                logs_dict["update_time"] = update_time
+                logs_dict["grad_norm"] = grad_norm.item() if 'grad_norm' in locals() else 0.0
+
+                policy_norms = calculate_network_norms(policy, "policy")
+                logs_dict.update(policy_norms)
+
                 if eval_avg_return is not None:
-                    logs["eval_avg_return"] = eval_avg_return
-                    logs["eval_avg_length"] = eval_avg_length
-                
-                wandb.log(logs, step=global_step)
-            
+                    logs_dict["eval_avg_return"] = eval_avg_return
+                    logs_dict["eval_avg_length"] = eval_avg_length
+
+                wandb.log({"speed": fps, "frame": global_step, **logs_dict}, step=global_step)
+
+            if (
+                args.save_interval > 0
+                and global_step > 0
+                and global_step % args.save_interval == 0
+            ):
+                print(f"Saving model at global step {global_step}")
+                save_ppo_params(
+                    global_step,
+                    policy,
+                    normalizer,
+                    args,
+                    f"{args.output_dir}/{run_name}_{global_step}.pt",
+                )
+
             last_log_time = current_time
     
     total_time = time.time() - start_time
@@ -445,6 +463,14 @@ def main():
             "final_fps": global_step/total_time,
         }, step=global_step)
         wandb.finish()
+
+    save_ppo_params(
+        global_step,
+        policy,
+        normalizer,
+        args,
+        f"{args.output_dir}/{run_name}_final.pt",
+    )
 
 
 if __name__ == "__main__":

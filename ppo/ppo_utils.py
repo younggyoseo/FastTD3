@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
+import os
 
 class RolloutBuffer:
     """
@@ -101,3 +102,26 @@ class RolloutBuffer:
 
     def clear(self):
         self.ptr_step = 0
+
+
+def cpu_state(sd):
+    """Detach and move tensors to CPU for serialization."""
+    return {k: v.detach().to("cpu", non_blocking=True) for k, v in sd.items()}
+
+
+def save_ppo_params(global_step, policy, obs_normalizer, args, save_path):
+    """Save PPO policy parameters and configuration."""
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    save_dict = {
+        "policy_state_dict": cpu_state(policy.state_dict()),
+        "obs_normalizer_state": (
+            cpu_state(obs_normalizer.state_dict())
+            if hasattr(obs_normalizer, "state_dict")
+            else None
+        ),
+        "args": vars(args),
+        "global_step": global_step,
+    }
+    torch.save(save_dict, save_path, _use_new_zipfile_serialization=True)
+    print(f"Saved parameters and configuration to {save_path}")
+
