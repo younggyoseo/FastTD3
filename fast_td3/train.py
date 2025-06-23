@@ -10,22 +10,17 @@ else:
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["JAX_DEFAULT_MATMUL_PRECISION"] = "highest"
 
+import math
 import random
 import time
-import math
 
-import tqdm
-import wandb
 import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.amp import autocast, GradScaler
-
-from tensordict import TensorDict, from_module
-
+import tqdm
+import wandb
 from fast_td3_utils import (
     EmpiricalNormalization,
     RewardNormalizer,
@@ -33,6 +28,8 @@ from fast_td3_utils import (
     save_params,
 )
 from hyperparams import get_args
+from tensordict import TensorDict, from_module
+from torch.amp import GradScaler, autocast
 
 torch.set_float32_matmul_precision("high")
 
@@ -47,14 +44,21 @@ def main():
     print(args)
     run_name = f"{args.env_name}__{args.exp_name}__{args.seed}"
 
+    ##NOTE - 设置自动混合精度设备
     amp_enabled = args.amp and args.cuda and torch.cuda.is_available()
     amp_device_type = (
         "cuda"
         if args.cuda and torch.cuda.is_available()
-        else "mps" if args.cuda and torch.backends.mps.is_available() else "cpu"
+        else "mps"
+        if args.cuda and torch.backends.mps.is_available()
+        else "cpu"
     )
     amp_dtype = torch.bfloat16 if args.amp_dtype == "bf16" else torch.float16
 
+    """
+    当使用 float16 时，其表示的数值范围比 float32 小得多。这可能导致在反向传播过程中计算出的梯度值非常小，以至于变成零（称为“梯度下溢”），从而阻碍模型训练。
+    GradScaler 通过在反向传播前将损失值乘以一个大的缩放因子（scale a large factor）来解决这个问题。这会相应地放大梯度，防止它们下溢。
+    """
     scaler = GradScaler(enabled=amp_enabled and amp_dtype == torch.float16)
 
     if args.use_wandb:
@@ -65,11 +69,13 @@ def main():
             save_code=True,
         )
 
+    ##NOTE - 设置随机种子
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
+    ##NOTE - 设置 device
     if not args.cuda:
         device = torch.device("cpu")
     else:
@@ -81,6 +87,7 @@ def main():
             raise ValueError("No GPU available")
     print(f"Using device: {device}")
 
+    ##NOTE - 设置环境
     if args.env_name.startswith("h1hand-") or args.env_name.startswith("h1-"):
         from environments.humanoid_bench_env import HumanoidBenchEnv
 
@@ -106,7 +113,7 @@ def main():
     else:
         from environments.mujoco_playground_env import make_env
 
-        # TODO: Check if re-using same envs for eval could reduce memory usage
+        # TODO：检查是否重新使用相同的ENV进行评估可以减少内存使用量
         env_type = "mujoco_playground"
         envs, eval_envs, render_env = make_env(
             args.env_name,
@@ -120,26 +127,35 @@ def main():
         )
 
     n_act = envs.num_actions
-    n_obs = envs.num_obs if type(envs.num_obs) == int else envs.num_obs[0]
+    n_obs = envs.num_obs if isinstance(envs.num_obs, int) else envs.num_obs[0]
+
+    ##NOTE - 非对称观察空间
+    """
+    这首先检查环境是否使用“非对称观察”（Asymmetric Observations）。这是一种在强化学习中常用的技术，其中 Critic（评论家）可以访问比 Actor（演员）更多的信息。这些额外的信息被称为“特权信息”（Privileged Information），可以帮助 Critic 更准确地评估状态的价值，从而指导 Actor 更好地学习，
+    但 Actor 在实际执行时并不能看到这些信息。
+    """
     if envs.asymmetric_obs:
         n_critic_obs = (
-            envs.num_privileged_obs
-            if type(envs.num_privileged_obs) == int
+            envs.num_privileged_obs  ##ANCHOR - 待看内部实现
+            if isinstance(envs.num_privileged_obs, int)
             else envs.num_privileged_obs[0]
         )
     else:
         n_critic_obs = n_obs
     action_low, action_high = -1.0, 1.0
 
+    ##NOTE - 状态归一化
     if args.obs_normalization:
         obs_normalizer = EmpiricalNormalization(shape=n_obs, device=device)
         critic_obs_normalizer = EmpiricalNormalization(
             shape=n_critic_obs, device=device
         )
     else:
+        ##NOTE - nn.Identity() 返回了一个恒等函数f(x) = x，如果后续 y = obs_normalizer(x)，则 y = x
         obs_normalizer = nn.Identity()
         critic_obs_normalizer = nn.Identity()
 
+    ##NOTE - 奖励归一化
     if args.reward_normalization:
         reward_normalizer = RewardNormalizer(
             gamma=args.gamma, device=device, g_max=min(abs(args.v_min), abs(args.v_max))
@@ -147,6 +163,7 @@ def main():
     else:
         reward_normalizer = nn.Identity()
 
+    ##NOTE - 设置 actor 和 critic 模型参数
     actor_kwargs = {
         "n_obs": n_obs,
         "n_act": n_act,
@@ -165,10 +182,12 @@ def main():
         "device": device,
     }
 
+    ##NOTE - 选择算法，包括 fast_td3 和 fast_td3_simbav2
     if args.agent == "fasttd3":
         from fast_td3 import Actor, Critic
 
         print("Using FastTD3")
+
     elif args.agent == "fasttd3_simbav2":
         from fast_td3_simbav2 import Actor, Critic
 
@@ -200,16 +219,21 @@ def main():
         raise ValueError(f"Agent {args.agent} not supported")
 
     actor = Actor(**actor_kwargs)
+
+    ##REVIEW - 分离策略，在与环境交互以收集数据时，生成动作，同时不记录梯度信息
     actor_detach = Actor(**actor_kwargs)
 
-    # Copy params to actor_detach without grad
+    ##NOTE -  将参数复制到actor_detach，.data 这个操作会获取参数的底层张量，但不会复制它们的计算图历史（梯度信息）
     from_module(actor).data.to_module(actor_detach)
+
+    ##NOTE -  policy什么用？
     policy = actor_detach.explore
 
     qnet = Critic(**critic_kwargs)
     qnet_target = Critic(**critic_kwargs)
     qnet_target.load_state_dict(qnet.state_dict())
 
+    ##NOTE - 使用AdamW优化器，和Adam比，其在优化时会对权重衰减进行更好的处理
     q_optimizer = optim.AdamW(
         list(qnet.parameters()),
         lr=args.critic_learning_rate,
@@ -221,16 +245,29 @@ def main():
         weight_decay=args.weight_decay,
     )
 
-    # Add learning rate schedulers
+    ##NOTE - CosineAnnealingLR学习率退火
+    """
+    optim.lr_scheduler.CosineAnnealingLR: 这是 PyTorch 提供的一种学习率调整策略。它会让学习率在一个周期内，像余弦函数曲线一样平滑地下降。
+
+    q_optimizer: 这是第一个参数，告诉调度器它需要控制哪个优化器。在这里，它控制的是 Critic 网络的优化器。
+
+    T_max=args.total_timesteps: 这是余弦退火中最重要的参数之一，代表了学习率从最高点下降到最低点的周期的一半。在这里，它被设置为总的训练步数 args.total_timesteps。这意味着，学习率将在整个训练过程中（从第 0 步到最后一步）平滑地进行一次完整的下降。
+
+    eta_min=args.critic_learning_rate_end: 这个参数设置了学习率的下限。当学习率根据余弦曲线下降时，它最低会降到这个值，而不会变成 0。注释中提到 衰减至初始LR的10％，这说明 args.critic_learning_rate_end 这个参数值可能被设置为了初始学习率的 10%。
+    
+    ##NOTE - Adam和学习率退火的关系：
+    学习率调度器（余弦退火） 负责制定宏观战略：它告诉优化器在训练的当前阶段，整体的“油门”应该踩多深（设置全局基础 lr）。
+    优化器（AdamW） 负责执行战术微操：它拿到调度器给的全局 lr，然后根据每个参数自己的情况，对这个 lr 进行自适应的微调，决定每个参数具体迈出多大的一步。
+    """
     q_scheduler = optim.lr_scheduler.CosineAnnealingLR(
         q_optimizer,
         T_max=args.total_timesteps,
-        eta_min=args.critic_learning_rate_end,  # Decay to 10% of initial lr
+        eta_min=args.critic_learning_rate_end,  # 衰减至初始LR的10％
     )
     actor_scheduler = optim.lr_scheduler.CosineAnnealingLR(
         actor_optimizer,
         T_max=args.total_timesteps,
-        eta_min=args.actor_learning_rate_end,  # Decay to 10% of initial lr
+        eta_min=args.actor_learning_rate_end,  # 衰减至初始LR的10％
     )
 
     rb = SimpleReplayBuffer(
@@ -243,12 +280,13 @@ def main():
         playground_mode=env_type == "mujoco_playground",
         n_steps=args.num_steps,
         gamma=args.gamma,
-        device=device,
+        device=device,  # 全放在GPU上
     )
 
     policy_noise = args.policy_noise
     noise_clip = args.noise_clip
 
+    ##SECTION - 评估函数
     def evaluate():
         obs_normalizer.eval()
         num_eval_envs = eval_envs.num_envs
@@ -261,18 +299,33 @@ def main():
         else:
             obs = eval_envs.reset()
 
-        # Run for a fixed number of steps
+        # 运行固定数量的步骤
         for _ in range(eval_envs.max_episode_steps):
-            with torch.no_grad(), autocast(
-                device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
+            with (
+                torch.no_grad(),
+                autocast(
+                    device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
+                ),
             ):
                 obs = normalize_obs(obs)
                 actions = actor(obs)
 
             next_obs, rewards, dones, _ = eval_envs.step(actions.float())
+
+            ##NOTE - 统计每个回合的奖励和长度
+            """
+            torch.where 是一个三元操作符，它的格式是：torch.where(condition, x, y)。
+
+            它的工作方式是：
+
+            检查 condition 张量中的每一个元素。
+            如果某个位置的条件为 True，则从 x 张量的对应位置取值。
+            如果某个位置的条件为 False，则从 y 张量的对应位置取值。
+            当 done_masks 为 False 时，表示当前回合还没有结束，因此将 rewards 累加到 episode_returns 中，并将 episode_lengths 加 1。
+            """
             episode_returns = torch.where(
                 ~done_masks, episode_returns + rewards, episode_returns
-            )
+            )  # ! “~” 是逻辑非运算符
             episode_lengths = torch.where(
                 ~done_masks, episode_lengths + 1, episode_lengths
             )
@@ -281,13 +334,15 @@ def main():
                 break
             obs = next_obs
 
-        obs_normalizer.train()
+        obs_normalizer.train()  # 设置为训练模式
         return episode_returns.mean().item(), episode_lengths.mean().item()
+        ##!SECTION
 
+    ##SECTION - 渲染函数
     def render_with_rollout():
         obs_normalizer.eval()
 
-        # Quick rollout for rendering
+        # 快速渲染
         if env_type == "humanoid_bench":
             obs = render_env.reset()
             renders = [render_env.render()]
@@ -297,18 +352,22 @@ def main():
             )
         else:
             obs = render_env.reset()
+            ##NOTE - 设置渲染的指令
             render_env.state.info["command"] = jnp.array([[1.0, 0.0, 0.0]])
             renders = [render_env.state]
         for i in range(render_env.max_episode_steps):
-            with torch.no_grad(), autocast(
-                device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
+            with (
+                torch.no_grad(),
+                autocast(
+                    device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
+                ),
             ):
                 obs = normalize_obs(obs)
                 actions = actor(obs)
             next_obs, _, done, _ = render_env.step(actions.float())
             if env_type == "mujoco_playground":
                 render_env.state.info["command"] = jnp.array([[1.0, 0.0, 0.0]])
-            if i % 2 == 0:
+            if i % 2 == 0:  # 抽帧渲染，每两帧渲染一次
                 if env_type == "humanoid_bench":
                     renders.append(render_env.render())
                 else:
@@ -322,7 +381,9 @@ def main():
 
         obs_normalizer.train()
         return renders
+        ##!SECTION
 
+    ##SECTION - 更新函数
     def update_main(data, logs_dict):
         with autocast(
             device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
@@ -340,14 +401,23 @@ def main():
             dones = data["next"]["dones"].bool()
             truncations = data["next"]["truncations"].bool()
             if args.disable_bootstrap:
-                bootstrap = (~dones).float()
+                bootstrap = (~dones).float()  # 未完成时，bootstrap为1.0
             else:
-                bootstrap = (truncations | ~dones).float()
+                bootstrap = (
+                    truncations | ~dones
+                ).float()  # 被截断或未完成时，bootstrap为1.0
 
-            clipped_noise = torch.randn_like(actions)
+            ##NOTE - 计算动作噪声
+            """
+            生成一个与动作形状相同、符合正态分布的随机噪声，然后通过 .mul() 调整其幅度，
+            再通过.clamp() 限制其范围，最终得到一个有界且平滑的噪声。
+            z = μ + σ * ϵ
+            这里policy_noise是σ（标准差）
+            """
+            clipped_noise = torch.randn_like(actions)  # 标准正分布噪声
             clipped_noise = clipped_noise.mul(policy_noise).clamp(
                 -noise_clip, noise_clip
-            )
+            )  # mul 是张量的逐元素乘法
 
             next_state_actions = (actor(next_observations) + clipped_noise).clamp(
                 action_low, action_high
@@ -366,6 +436,8 @@ def main():
                 )
                 qf1_next_target_value = qnet_target.get_value(qf1_next_target_projected)
                 qf2_next_target_value = qnet_target.get_value(qf2_next_target_projected)
+
+                ##NOTE - 裁断双Q学习（CDQ）
                 if args.use_cdq:
                     qf_next_target_dist = torch.where(
                         qf1_next_target_value.unsqueeze(1)
@@ -405,6 +477,7 @@ def main():
         logs_dict["qf_max"] = qf1_next_target_value.max().detach()
         logs_dict["qf_min"] = qf1_next_target_value.min().detach()
         return logs_dict
+        ##!SECTION
 
     def update_pol(data, logs_dict):
         with autocast(
@@ -438,6 +511,10 @@ def main():
         logs_dict["actor_loss"] = actor_loss.detach()
         return logs_dict
 
+    ##NOTE - 编译函数
+    """
+    编译的目标是一个方法，因此底下是编译 obs_normalizer.forward 而不是 obs_normalizer 对象
+    """
     if args.compile:
         mode = None
         update_main = torch.compile(update_main, mode=mode)
@@ -461,7 +538,7 @@ def main():
     else:
         obs = envs.reset()
     if args.checkpoint_path:
-        # Load checkpoint if specified
+        # 加载检查点如果指定
         torch_checkpoint = torch.load(
             f"{args.checkpoint_path}", map_location=device, weights_only=False
         )
@@ -481,17 +558,21 @@ def main():
     start_time = None
     desc = ""
 
+    ##SECTION - 主训练循环
     while global_step < args.total_timesteps:
+        # 在每次主循环开始时，初始化一个空的 TensorDict。TensorDict 是一个专门用于存储和操作张量的字典。在后续的更新函数（update_main, update_pol）中，各种日志信息（如损失、梯度范数等）会被收集到这个 logs_dict 中。
         logs_dict = TensorDict()
+
         if (
             start_time is None
             and global_step >= args.measure_burnin + args.learning_starts
-        ):
+        ):  # 只会被执行一次，用于精确计算训练速度
             start_time = time.time()
             measure_burnin = global_step
 
-        with torch.no_grad(), autocast(
-            device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
+        with (
+            torch.no_grad(),
+            autocast(device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled),
         ):
             norm_obs = normalize_obs(obs)
             actions = policy(obs=norm_obs, dones=dones)
@@ -499,22 +580,24 @@ def main():
         next_obs, rewards, dones, infos = envs.step(actions.float())
         truncations = infos["time_outs"]
 
-        if args.reward_normalization:
+        if args.reward_normalization:  # 奖励归一化，不推荐，导致不稳定
             update_stats(rewards, dones.float())
 
-        if envs.asymmetric_obs:
+        if envs.asymmetric_obs:  # 特权状态
             next_critic_obs = infos["observations"]["critic"]
 
-        # Compute 'true' next_obs and next_critic_obs for saving
+        # 计算“ true” next_obs和next_critic_obs保存
         true_next_obs = torch.where(
             dones[:, None] > 0, infos["observations"]["raw"]["obs"], next_obs
         )
-        if envs.asymmetric_obs:
+        if envs.asymmetric_obs:  # 特权状态
             true_next_critic_obs = torch.where(
                 dones[:, None] > 0,
                 infos["observations"]["raw"]["critic_obs"],
                 next_critic_obs,
             )
+
+        ##NOTE - 得到一批（a batch of） num_envs 次经验。
         transition = TensorDict(
             {
                 "observations": obs,
@@ -539,10 +622,11 @@ def main():
         if envs.asymmetric_obs:
             critic_obs = next_critic_obs
 
-        rb.extend(transition)
+        rb.extend(transition)  ##REVIEW - 回放区内部方法
 
         batch_size = args.batch_size // args.num_envs
         if global_step > args.learning_starts:
+            ##NOTE - 每一步更新权重次数
             for i in range(args.num_updates):
                 data = rb.sample(batch_size)
                 data["observations"] = normalize_obs(data["observations"])
@@ -558,9 +642,12 @@ def main():
                     data["next"]["critic_observations"] = normalize_critic_obs(
                         data["next"]["critic_observations"]
                     )
+
+                ##NOTE - 更新主网络，每一个 step 更新 num_updates 次
                 logs_dict = update_main(data, logs_dict)
                 if args.num_updates > 1:
                     if i % args.policy_frequency == 1:
+                        ##NOTE - 当 i == 0 时，更新策略，为 1 时不更新，仍然相当于每更新两次critic,更新一次 actor
                         logs_dict = update_pol(data, logs_dict)
                 else:
                     if global_step % args.policy_frequency == 0:
@@ -569,10 +656,12 @@ def main():
                 for param, target_param in zip(
                     qnet.parameters(), qnet_target.parameters()
                 ):
+                    ##NOTE - 软更新目标网络
                     target_param.data.copy_(
                         args.tau * param.data + (1 - args.tau) * target_param.data
                     )
 
+            ##NOTE - 更新日志
             if global_step % 100 == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
                 pbar.set_description(f"{speed: 4.4f} sps, " + desc)
@@ -592,7 +681,7 @@ def main():
                         print(f"Evaluating at global step {global_step}")
                         eval_avg_return, eval_avg_length = evaluate()
                         if env_type in ["humanoid_bench", "isaaclab"]:
-                            # NOTE: Hacky way of evaluating performance, but just works
+                            ## NOTE: 评估性能的临时方法，但确实有效
                             obs = envs.reset()
                         logs["eval_avg_return"] = eval_avg_return
                         logs["eval_avg_length"] = eval_avg_length
@@ -608,7 +697,7 @@ def main():
                                     "render_video": wandb.Video(
                                         np.array(renders).transpose(
                                             0, 3, 1, 2
-                                        ),  # Convert to (T, C, H, W) format
+                                        ),  # 转换为（t，c，h，w）格式
                                         fps=30,
                                         format="gif",
                                     )
@@ -644,7 +733,7 @@ def main():
                     f"models/{run_name}_{global_step}.pt",
                 )
 
-            # Update learning rates
+            # 更新学习率
             q_scheduler.step()
             actor_scheduler.step()
 

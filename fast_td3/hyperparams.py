@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+
 import tyro
 
 
@@ -85,7 +86,7 @@ class BaseArgs:
     use_cdq: bool = True
     """whether to use Clipped Double Q-learning"""
     measure_burnin: int = 3
-    """Number of burn-in iterations for speed measure."""
+    """用于速度测量的预热迭代次数。"""
     eval_interval: int = 5000
     """the interval to evaluate the model"""
     render_interval: int = 5000
