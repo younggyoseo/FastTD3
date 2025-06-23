@@ -11,8 +11,11 @@ import isaaclab_tasks
 from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
 
-class IsaacLabEnv:
-    """Wrapper for IsaacLab environments to be compatible with MuJoCo Playground"""
+class IsaacLabAMPEnv:
+    """
+    Wrapper for IsaacLab AMP tasks
+    Currently breaks the API of main train.py logic
+    """
 
     def __init__(
         self,
@@ -35,27 +38,20 @@ class IsaacLabEnv:
         self.max_episode_steps = self.envs.unwrapped.max_episode_length
         self.action_bounds = action_bounds
         self.num_obs = self.envs.unwrapped.single_observation_space["policy"].shape[0]
-        self.asymmetric_obs = "critic" in self.envs.unwrapped.single_observation_space
-        if self.asymmetric_obs:
-            self.num_privileged_obs = self.envs.unwrapped.single_observation_space[
-                "critic"
-            ].shape[0]
-        else:
-            self.num_privileged_obs = 0
+        self.num_amp_obs = self.envs.amp_observation_space.shape[0]
         self.num_actions = self.envs.unwrapped.single_action_space.shape[0]
 
-    def reset(self, random_start_init: bool = True) -> torch.Tensor:
+        # IsaacLab AMP tasks' observation space is not asymmetric
+        self.asymmetric_obs = False
+        self.num_privileged_obs = 0
+
+    def reset(self) -> torch.Tensor:
         obs_dict, _ = self.envs.reset()
-        # NOTE: decorrelate episode horizons like RSL‑RL
-        if random_start_init:
-            self.envs.unwrapped.episode_length_buf = torch.randint_like(
-                self.envs.unwrapped.episode_length_buf, high=int(self.max_episode_steps)
-            )
         return obs_dict["policy"]
 
-    def reset_with_critic_obs(self) -> tuple[torch.Tensor, torch.Tensor]:
-        obs_dict, _ = self.envs.reset()
-        return obs_dict["policy"], obs_dict["critic"]
+    def reset_with_amp_obs(self) -> tuple[torch.Tensor, torch.Tensor]:
+        obs_dict, info_dict = self.envs.reset()
+        return obs_dict["policy"], info_dict["amp_obs"]
 
     def step(
         self, actions: torch.Tensor
@@ -65,18 +61,17 @@ class IsaacLabEnv:
         obs_dict, rew, terminations, truncations, infos = self.envs.step(actions)
         dones = (terminations | truncations).to(dtype=torch.long)
         obs = obs_dict["policy"]
-        critic_obs = obs_dict["critic"] if self.asymmetric_obs else None
-        info_ret = {"time_outs": truncations, "observations": {"critic": critic_obs}}
+        amp_obs = infos["amp_obs"]
+        info_ret = {
+            "time_outs": truncations,
+            "amp_obs": amp_obs,
+            "observations": {},
+        }
         # NOTE: There's really no way to get the raw observations from IsaacLab
         # We just use the 'reset_obs' as next_obs, unfortunately.
         # See https://github.com/isaac-sim/IsaacLab/issues/1362
-        info_ret["observations"]["raw"] = {
-            "obs": obs,
-            "critic_obs": critic_obs,
-        }
+        info_ret["observations"]["raw"] = {"obs": obs}
         return obs, rew, dones, info_ret
 
-    def render(self):
-        raise NotImplementedError(
-            "We don't support rendering for IsaacLab environments"
-        )
+    def sample_reference_amp_observations(self, batch_size: int) -> torch.Tensor:
+        return self.envs.collect_reference_motions(batch_size)

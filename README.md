@@ -9,16 +9,6 @@ FastTD3 is a high-performance variant of the Twin Delayed Deep Deterministic Pol
 For more information, please see our [project webpage](https://younggyo.me/fast_td3)
 
 
-## ❗ Updates
-- **[Jun/20/2025]** Added support for [MTBench](https://github.com/Viraj-Joshi/MTBench)
-
-- **[Jun/15/2025]** Added support for FastTD3 + [SimbaV2](https://dojeon-ai.github.io/SimbaV2/)! It's faster to train, and often achieves better asymptotic performance. We recommend using FastTD3 + SimbaV2 for most cases.
-
-- **[Jun/06/2025]** Thanks to [Antonin Raffin](https://araffin.github.io/) ([@araffin](https://github.com/araffin)), we fixed the issues when using `n_steps` > 1, which stabilizes training with n-step return quite a lot!
-
-- **[Jun/01/2025]** Updated the figures in the technical report to report deterministic evaluation for IsaacLab tasks.
-
-
 ## ✨ Features
 
 FastTD3 offers researchers a significant speedup in training complex humanoid agents.
@@ -46,26 +36,6 @@ This project requires different Conda environments for different sets of experim
 ### Common Setup
 First, ensure the common dependencies are installed as mentioned in the [Prerequisites](#prerequisites) section.
 
-### Environment for HumanoidBench
-
-```bash
-conda create -n fasttd3_hb -y python=3.10
-conda activate fasttd3_hb
-pip install --editable git+https://github.com/carlosferrazza/humanoid-bench.git#egg=humanoid-bench
-pip install -r requirements/requirements.txt
-```
-
-### Environment for MuJoCo Playground
-```bash
-conda create -n fasttd3_playground -y python=3.10
-conda activate fasttd3_playground
-pip install -r requirements/requirements_playground.txt
-```
-
-**⚠️ Note:** Our `requirements_playground.txt` specifies `Jax==0.4.35`, which we found to be stable for latest GPUs in certain tasks such as `LeapCubeReorient` or `LeapCubeRotateZAxis`
-
-**⚠️ Note:** Current FastTD3 codebase uses customized MuJoCo Playground that supports saving last observations into info dictionary. We will work on incorporating this change into official repository hopefully soon.
-
 ### Environment for IsaacLab
 ```bash
 conda create -n fasttd3_isaaclab -y python=3.10
@@ -82,28 +52,6 @@ cd ..
 # Install project-specific requirements
 pip install -r requirements/requirements.txt
 ```
-
-### Environment for MTBench
-MTBench does not support humanoid experiments, but is a useful multi-task benchmark with massive parallel simulation. This could be useful for users who want to use FastTD3 for their multi-task experiments.
-
-```bash
-conda create -n fasttd3_mtbench -y python=3.8  # Note python version
-conda activate fasttd3_mtbench
-
-# Install IsaacGym -- recommend to follow instructions in https://github.com/BoosterRobotics/booster_gym
-...
-
-# Install MTBench
-git clone https://github.com/Viraj-Joshi/MTBench.git
-cd MTbench
-pip install -e .
-pip install skrl
-cd ..
-
-# Install project-specific requirements
-pip install -r requirements/requirements_isaacgym.txt
-```
-
 ### (Optional) Accelerate headless GPU rendering in cloud instances
 
 In some cloud VM images the NVIDIA kernel driver is present but the user-space OpenGL/EGL/Vulkan libraries aren't, so MuJoCo falls back to CPU renderer. You can install just the NVIDIA user-space libraries (and skip rebuilding the kernel module) with:
@@ -121,58 +69,6 @@ Activate the appropriate Conda environment before running experiments.
 
 Please see `fast_td3/hyperparams.py` for information regarding hyperparameters!
 
-### HumanoidBench Experiments
-```bash
-conda activate fasttd3_hb
-# FastTD3
-python fast_td3/train.py \
-    --env_name h1hand-hurdle-v0 \
-    --exp_name FastTD3 \
-    --render_interval 5000 \
-    --seed 1
-# FastTD3 + SimbaV2
-python fast_td3/train.py \
-    --env_name h1hand-hurdle-v0 \
-    --exp_name FastTD3 \
-    --render_interval 5000 \
-    --agent fasttd3_simbav2 \
-    --batch_size 8192 \
-    --critic_learning_rate_end 3e-5 \
-    --actor_learning_rate_end 3e-5 \
-    --weight_decay 0.0 \
-    --critic_hidden_dim 512 \
-    --critic_num_blocks 2 \
-    --actor_hidden_dim 256 \
-    --actor_num_blocks 1 \
-    --seed 1
-```
-
-### MuJoCo Playground Experiments
-```bash
-conda activate fasttd3_playground
-# FastTD3
-python fast_td3/train.py \
-    --env_name T1JoystickFlatTerrain \
-    --exp_name FastTD3 \
-    --render_interval 5000 \
-    --seed 1
-# FastTD3 + SimbaV2
-python fast_td3/train.py \
-    --env_name T1JoystickFlatTerrain \
-    --exp_name FastTD3 \
-    --render_interval 5000 \
-    --agent fasttd3_simbav2 \
-    --batch_size 8192 \
-    --critic_learning_rate_end 3e-5 \
-    --actor_learning_rate_end 3e-5 \
-    --weight_decay 0.0 \
-    --critic_hidden_dim 512 \
-    --critic_num_blocks 2 \
-    --actor_hidden_dim 256 \
-    --actor_num_blocks 1 \
-    --seed 1
-```
-
 ### IsaacLab Experiments
 ```bash
 conda activate fasttd3_isaaclab
@@ -181,47 +77,6 @@ python fast_td3/train.py \
     --env_name Isaac-Velocity-Flat-G1-v0 \
     --exp_name FastTD3 \
     --render_interval 0 \
-    --seed 1
-# FastTD3 + SimbaV2
-python fast_td3/train.py \
-    --env_name Isaac-Repose-Cube-Allegro-Direct-v0 \
-    --exp_name FastTD3 \
-    --render_interval 0 \
-    --agent fasttd3_simbav2 \
-    --batch_size 8192 \
-    --critic_learning_rate_end 3e-5 \
-    --actor_learning_rate_end 3e-5 \
-    --weight_decay 0.0 \
-    --critic_hidden_dim 512 \
-    --critic_num_blocks 2 \
-    --actor_hidden_dim 256 \
-    --actor_num_blocks 1 \
-    --seed 1
-```
-
-### MTBench Experiments
-```bash
-conda activate fasttd3_mtbench
-# FastTD3
-python fast_td3/train.py \
-    --env_name MTBench-meta-world-v2-mt10 \
-    --exp_name FastTD3 \
-    --render_interval 0 \
-    --seed 1
-# FastTD3 + SimbaV2
-python fast_td3/train.py \
-    --env_name MTBench-meta-world-v2-mt10 \
-    --exp_name FastTD3 \
-    --render_interval 0 \
-    --agent fasttd3_simbav2 \
-    --batch_size 8192 \
-    --critic_learning_rate_end 3e-5 \
-    --actor_learning_rate_end 3e-5 \
-    --weight_decay 0.0 \
-    --critic_hidden_dim 512 \
-    --critic_num_blocks 2 \
-    --actor_hidden_dim 256 \
-    --actor_num_blocks 1 \
     --seed 1
 ```
 
@@ -291,16 +146,6 @@ We would like to thank people who have helped throughout the project:
 }
 ```
 
-### SimbaV2
-```bibtex
-@article{lee2025hyperspherical,
-  title={Hyperspherical normalization for scalable deep reinforcement learning},
-  author={Lee, Hojoon and Lee, Youngdo and Seno, Takuma and Kim, Donghu and Stone, Peter and Choo, Jaegul},
-  journal={arXiv preprint arXiv:2502.15280},
-  year={2025}
-}
-```
-
 ### LeanRL
 
 Following the [LeanRL](https://github.com/pytorch-labs/LeanRL)'s recommendation, we put CleanRL's bibtex here:
@@ -330,26 +175,6 @@ Following the [LeanRL](https://github.com/pytorch-labs/LeanRL)'s recommendation,
 }
 ```
 
-### HumanoidBench
-```bibtex
-@inproceedings{sferrazza2024humanoidbench,
-  title={Humanoidbench: Simulated humanoid benchmark for whole-body locomotion and manipulation},
-  author={Sferrazza, Carmelo and Huang, Dun-Ming and Lin, Xingyu and Lee, Youngwoon and Abbeel, Pieter},
-  booktitle={Robotics: Science and Systems},
-  year={2024}
-}
-```
-
-### MuJoCo Playground
-```bibtex
-@article{zakka2025mujoco,
-  title={MuJoCo Playground},
-  author={Zakka, Kevin and Tabanpour, Baruch and Liao, Qiayuan and Haiderbhai, Mustafa and Holt, Samuel and Luo, Jing Yuan and Allshire, Arthur and Frey, Erik and Sreenath, Koushil and Kahrs, Lueder A and others},
-  journal={arXiv preprint arXiv:2502.08844},
-  year={2025}
-}
-```
-
 ### IsaacLab
 ```bibtex
 @article{mittal2023orbit,
@@ -361,18 +186,6 @@ Following the [LeanRL](https://github.com/pytorch-labs/LeanRL)'s recommendation,
    number={6},
    pages={3740-3747},
    doi={10.1109/LRA.2023.3270034}
-}
-```
-
-### MTBench
-```bibtex
-@inproceedings{
-joshi2025benchmarking,
-title={Benchmarking Massively Parallelized Multi-Task Reinforcement Learning for Robotics Tasks},
-author={Viraj Joshi and Zifan Xu and Bo Liu and Peter Stone and Amy Zhang},
-booktitle={Reinforcement Learning Conference},
-year={2025},
-url={https://openreview.net/forum?id=z0MM0y20I2}
 }
 ```
 

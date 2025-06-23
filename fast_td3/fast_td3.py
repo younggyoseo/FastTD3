@@ -46,6 +46,8 @@ class DistributionalQNetwork(nn.Module):
         delta_z = (self.v_max - self.v_min) / (self.num_atoms - 1)
         batch_size = rewards.shape[0]
 
+        print()
+
         target_z = (
             rewards.unsqueeze(1)
             + bootstrap.unsqueeze(1) * discount.unsqueeze(1) * q_support
