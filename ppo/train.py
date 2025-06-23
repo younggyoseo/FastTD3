@@ -1,5 +1,5 @@
 """Minimal PPO training loop for FastTD3 environments."""
-import argparse
+from .hyperparams import get_args
 import torch
 import torch.optim as optim
 from torch.nn import functional as F
@@ -34,46 +34,8 @@ torch.set_float32_matmul_precision("high")
 torch._dynamo.config.suppress_errors = True
 
 
-def make_parser():
-    parser = argparse.ArgumentParser(description="Train PPO")
-    parser.add_argument("--env_name", type=str, default="T1JoystickFlatTerrain")
-    parser.add_argument("--env_type", type=str, default="mujoco_playground")
-    parser.add_argument("--total-timesteps", type=int, default=200000000)
-    parser.add_argument("--num-envs", type=int, default=1024)
-    parser.add_argument("--learning-rate", type=float, default=3e-4)
-    parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--gae-lambda", type=float, default=0.95)
-    parser.add_argument("--clip-eps", type=float, default=0.2)
-    parser.add_argument("--ent-coef", type=float, default=0.0)
-    parser.add_argument("--vf-coef", type=float, default=0.5)
-    parser.add_argument("--update-epochs", type=int, default=4)
-    parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--rollout-length", type=int, default=256)
-    parser.add_argument("--hidden-dim", type=int, default=256)
-    parser.add_argument("--log-interval", type=int, default=1000, help="Log every N timesteps")
-    parser.add_argument("--eval-interval", type=int, default=10000, help="Evaluate every N timesteps")
-    parser.add_argument("--num-eval-envs", type=int, default=10, help="Number of evaluation environments")
-    parser.add_argument("--use-wandb", action="store_true", help="Use wandb for logging")
-    parser.add_argument("--project", type=str, default="rl_scratch", help="Wandb project name")
-    parser.add_argument("--exp-name", type=str, default="ppo", help="Experiment name")
-    parser.add_argument("--seed", type=int, default=1, help="Random seed")
-    parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Maximum gradient norm for clipping")
-    parser.add_argument("--output-dir", type=str, default="logs", help="Directory to save checkpoints")
-    parser.add_argument("--save-interval", type=int, default=0, help="Interval to save model checkpoints")
-    parser.add_argument("--compile", action="store_true", help="Use torch.compile for key functions")
-    parser.add_argument("--amp", action="store_true", help="Enable automatic mixed precision")
-    parser.add_argument(
-        "--amp-dtype",
-        type=str,
-        default="bf16",
-        choices=["bf16", "fp16"],
-        help="Precision to use for AMP (bf16 or fp16)",
-    )
-    return parser
-
-
 def main():
-    args = make_parser().parse_args()
+    args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     amp_enabled = args.amp and torch.cuda.is_available()
