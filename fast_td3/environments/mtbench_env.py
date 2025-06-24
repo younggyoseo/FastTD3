@@ -64,6 +64,8 @@ class MTBenchEnv:
         # TODO: Check if we need no_grad and detach here
         with torch.no_grad():  # do we need this?
             self.env.reset_idx(torch.arange(self.num_envs, device=self.env.device))
+            self.env.cumulatives["rewards"][:] = 0
+            self.env.cumulatives["success"][:] = 0
             obs_dict = self.env.reset()
             return obs_dict["obs"].detach()
 
