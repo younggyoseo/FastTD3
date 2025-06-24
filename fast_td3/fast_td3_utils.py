@@ -551,6 +551,7 @@ class PerTaskEmpiricalNormalization(nn.Module):
         self.until = until
         self.device = device
 
+
         # 缓冲区现在具有用于任务的前导维度
         self.register_buffer("_mean", torch.zeros(num_tasks, *shape).to(device))
         self.register_buffer("_var", torch.ones(num_tasks, *shape).to(device))
@@ -575,8 +576,10 @@ class PerTaskEmpiricalNormalization(nn.Module):
         if x.shape[0] != task_ids.shape[0]:
             raise ValueError("Batch size of x and task_ids must match.")
 
+
         # 收集当前批次任务的统计数据
         # 调整 task_ids 以进行广播：[num_envs] -> [num_envs, 1, ...]
+
         view_shape = (task_ids.shape[0],) + (1,) * len(self.shape)
         task_ids_expanded = task_ids.view(view_shape).expand_as(x)
 
@@ -600,7 +603,9 @@ class PerTaskEmpiricalNormalization(nn.Module):
             if self.until is not None and self.count[task_id] >= self.until:
                 continue
 
+
             # 为当前任务创建一个掩码以选择数据
+
             mask = task_ids == task_id
             x_task = x[mask]
             batch_size = x_task.shape[0]
@@ -608,17 +613,21 @@ class PerTaskEmpiricalNormalization(nn.Module):
             if batch_size == 0:
                 continue
 
+
             # 更新此任务的计数
             old_count = self.count[task_id].clone()
             new_count = old_count + batch_size
 
             # 更新均值
+
             task_mean = self._mean[task_id]
             batch_mean = torch.mean(x_task, dim=0)
             delta = batch_mean - task_mean
             self._mean[task_id] = task_mean + (batch_size / new_count) * delta
 
+
             # 使用Chan的并行算法更新方差
+
             if old_count > 0:
                 batch_var = torch.var(x_task, dim=0, unbiased=False)
                 m_a = self._var[task_id] * old_count
@@ -626,7 +635,9 @@ class PerTaskEmpiricalNormalization(nn.Module):
                 M2 = m_a + m_b + (delta**2) * (old_count * batch_size / new_count)
                 self._var[task_id] = M2 / new_count
             else:
+
                 # 对于此任务的第一批
+
                 self._var[task_id] = torch.var(x_task, dim=0, unbiased=False)
 
             self._std[task_id] = torch.sqrt(self._var[task_id])

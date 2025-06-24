@@ -26,12 +26,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+
 import tqdm
 import wandb
+
 from fast_td3_utils import (
     EmpiricalNormalization,
     PerTaskRewardNormalizer,
     RewardNormalizer,
+    PerTaskRewardNormalizer,
     SimpleReplayBuffer,
     save_params,
 )
@@ -353,11 +356,13 @@ def main():
 
         # Run for a fixed number of steps
         for i in range(eval_envs.max_episode_steps):
+
             with (
                 torch.no_grad(),
                 autocast(
                     device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled
                 ),
+
             ):
                 obs = normalize_obs(obs)
                 actions = actor(obs)
@@ -370,6 +375,7 @@ def main():
                     infos["episode"]["success"].float() if "episode" in infos else 0.0
                 )
 
+
             ##NOTE - 统计每个回合的奖励和长度
             """
             torch.where 是一个三元操作符，它的格式是：torch.where(condition, x, y)。
@@ -381,6 +387,7 @@ def main():
             如果某个位置的条件为 False，则从 y 张量的对应位置取值。
             当 done_masks 为 False 时，表示当前回合还没有结束，因此将 rewards 累加到 episode_returns 中，并将 episode_lengths 加 1。
             """
+
             episode_returns = torch.where(
                 ~done_masks, episode_returns + rewards, episode_returns
             )  # ! “~” 是逻辑非运算符
@@ -539,7 +546,9 @@ def main():
         )
         scaler.step(q_optimizer)
         scaler.update()
+
         q_scheduler.step()  # 学习率退火
+
 
         logs_dict["critic_grad_norm"] = critic_grad_norm.detach()
         logs_dict["qf_loss"] = qf_loss.detach()
@@ -764,7 +773,9 @@ def main():
                         print(f"Evaluating at global step {global_step}")
                         eval_avg_return, eval_avg_length = evaluate()
                         if env_type in ["humanoid_bench", "isaaclab", "mtbench"]:
+
                             # NOTE: 评估性能的临时方法，但确实有效
+
                             obs = envs.reset()
                         logs["eval_avg_return"] = eval_avg_return
                         logs["eval_avg_length"] = eval_avg_length
