@@ -494,11 +494,14 @@ def main():
                         discount,
                     )
                 )
+
+                # 得到期望价值
                 qf1_next_target_value = qnet_target.get_value(qf1_next_target_projected)
                 qf2_next_target_value = qnet_target.get_value(qf2_next_target_projected)
 
                 ##NOTE - 裁断双Q学习（CDQ）
                 if args.use_cdq:
+                    # 选择较小的 Q 值作为目标，和原版 TD3 一样
                     qf_next_target_dist = torch.where(
                         qf1_next_target_value.unsqueeze(1)
                         < qf2_next_target_value.unsqueeze(1),
@@ -513,6 +516,8 @@ def main():
                     )
 
             qf1, qf2 = qnet(critic_observations, actions)
+
+            ##NOTE - 计算交叉熵损失，原版TD3输出的是单个Q值，所以损失函数是均方误差，fasttd3输出的是Q值分布，所以损失函数是交叉熵
             qf1_loss = -torch.sum(
                 qf1_next_target_dist * F.log_softmax(qf1, dim=1), dim=1
             ).mean()
@@ -521,17 +526,20 @@ def main():
             ).mean()
             qf_loss = qf1_loss + qf2_loss
 
-        q_optimizer.zero_grad(set_to_none=True)
-        scaler.scale(qf_loss).backward()
-        scaler.unscale_(q_optimizer)
+        q_optimizer.zero_grad(set_to_none=True)  # 设置成none能提升性能和减少内存占用。
+        scaler.scale(
+            qf_loss
+        ).backward()  #! 先对损失进行放大，防止梯度下溢，结合AMP 使用
+        scaler.unscale_(q_optimizer)  # 在更新权重前恢复梯度信号
 
+        ##NOTE - critic 梯度裁剪
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(
             qnet.parameters(),
             max_norm=args.max_grad_norm if args.max_grad_norm > 0 else float("inf"),
         )
         scaler.step(q_optimizer)
         scaler.update()
-        q_scheduler.step()
+        q_scheduler.step()  # 学习率退火
 
         logs_dict["critic_grad_norm"] = critic_grad_norm.detach()
         logs_dict["qf_loss"] = qf_loss.detach()
@@ -756,7 +764,7 @@ def main():
                         print(f"Evaluating at global step {global_step}")
                         eval_avg_return, eval_avg_length = evaluate()
                         if env_type in ["humanoid_bench", "isaaclab", "mtbench"]:
-                            # NOTE: Hacky way of evaluating performance, but just works
+                            # NOTE: 评估性能的临时方法，但确实有效
                             obs = envs.reset()
                         logs["eval_avg_return"] = eval_avg_return
                         logs["eval_avg_length"] = eval_avg_length
@@ -810,6 +818,7 @@ def main():
 
         global_step += 1
         pbar.update(1)
+    ##!SECTION
 
     save_params(
         global_step,

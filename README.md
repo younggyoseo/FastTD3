@@ -4,7 +4,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2505.22642-b31b1b.svg)](https://arxiv.org/abs/2505.22642)
 
 
-FastTD3 is a high-performance variant of the Twin Delayed Deep Deterministic Policy Gradient (TD3) algorithm, optimized for complex humanoid control tasks. FastTD3 can solve various humanoid control tasks with dexterous hands from HumanoidBench in just a few hours of training. Furthermore, FastTD3 achieves similar or better wall-time-efficiency to PPO in high-dimensional control tasks from popular simulations such as IsaacLab and MuJoCo Playground.
+FastTD3 是一种高性能的双延迟深度确定性策略梯度 (TD3) 算法变体，专为复杂的人形控制任务优化。FastTD3 仅需几小时的训练即可使用灵巧的手解决 HumanoidBench 中的各种人形控制任务。此外，FastTD3 在 IsaacLab 和 MuJoCo Playground 等流行模拟中的高维控制任务中实现了与 PPO 相似或更高的墙时效率。
 
 For more information, please see our [project webpage](https://younggyo.me/fast_td3)
 
