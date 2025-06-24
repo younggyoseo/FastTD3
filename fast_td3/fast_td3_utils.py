@@ -1,10 +1,8 @@
 import os
-
 from typing import Optional
 
 import torch
 import torch.nn as nn
-
 from tensordict import TensorDict
 
 
@@ -23,14 +21,13 @@ class SimpleReplayBuffer(nn.Module):
         device=None,
     ):
         """
-        A simple replay buffer that stores transitions in a circular buffer.
-        Supports n-step returns and asymmetric observations.
+        一个简单的重放缓冲区，用于以循环缓冲区存储转换。
+        支持 n 步回报和非对称观察。
 
-        When playground_mode=True, critic_observations are treated as a concatenation of
-        regular observations and privileged observations, and only the privileged part is stored
-        to save memory.
+        当 playground_mode=True 时，critic_observations 被视为常规观察和特权观察的拼接，
+        仅存储特权部分以节省内存。
 
-        TODO (Younggyo): Refactor to split this into SimpleReplayBuffer and NStepReplayBuffer
+        TODO (Younggyo): 重构以将其拆分为SimpleReplayBuffer和NStepReplayBuffer
         """
         super().__init__()
 
@@ -61,9 +58,11 @@ class SimpleReplayBuffer(nn.Module):
         self.next_observations = torch.zeros(
             (n_env, buffer_size, n_obs), device=device, dtype=torch.float
         )
+
+        ##NOTE - 特权观测部分
         if asymmetric_obs:
             if self.playground_mode:
-                # Only store the privileged part of observations (n_critic_obs - n_obs)
+                #! 对于playground仅存储观察的特权部分 (n_critic_obs - n_obs)
                 self.privileged_obs_size = n_critic_obs - n_obs
                 self.privileged_observations = torch.zeros(
                     (n_env, buffer_size, self.privileged_obs_size),
@@ -76,7 +75,7 @@ class SimpleReplayBuffer(nn.Module):
                     dtype=torch.float,
                 )
             else:
-                # Store full critic observations
+                # 存储完整的评论观察
                 self.critic_observations = torch.zeros(
                     (n_env, buffer_size, n_critic_obs), device=device, dtype=torch.float
                 )
@@ -97,6 +96,8 @@ class SimpleReplayBuffer(nn.Module):
         next_observations = tensor_dict["next"]["observations"]
 
         ptr = self.ptr % self.buffer_size
+
+        ##NOTE - 从tensor_dict存入数据
         self.observations[:, ptr] = observations
         self.actions[:, ptr] = actions
         self.rewards[:, ptr] = rewards
@@ -108,29 +109,33 @@ class SimpleReplayBuffer(nn.Module):
             next_critic_observations = tensor_dict["next"]["critic_observations"]
 
             if self.playground_mode:
-                # Extract and store only the privileged part
+                # 提取并仅存储特权部分
                 privileged_observations = critic_observations[:, self.n_obs :]
                 next_privileged_observations = next_critic_observations[:, self.n_obs :]
                 self.privileged_observations[:, ptr] = privileged_observations
                 self.next_privileged_observations[:, ptr] = next_privileged_observations
             else:
-                # Store full critic observations
+                # 存储完整的评论观察
                 self.critic_observations[:, ptr] = critic_observations
                 self.next_critic_observations[:, ptr] = next_critic_observations
         self.ptr += 1
 
     def sample(self, batch_size: int):
-        # we will sample n_env * batch_size transitions
-
+        # 我们将采样 n_env * batch_size 的转换
+        ##NOTE - n_steps = 1 时: 我们使用最经典的 1-step TD
         if self.n_steps == 1:
             indices = torch.randint(
                 0,
                 min(self.buffer_size, self.ptr),
                 (self.n_env, batch_size),
                 device=self.device,
-            )
+            )  # 形状为 (n_env, batch_size)
+
+            #! 采样的目标形状 (n_env, batch_size, n_obs)，expand 的参数中，-1 是一个特殊值，意思是**“保持这个维度的大小不变”**。
             obs_indices = indices.unsqueeze(-1).expand(-1, -1, self.n_obs)
             act_indices = indices.unsqueeze(-1).expand(-1, -1, self.n_act)
+
+            ##NOTE - 抽取样本，对于每个环境，抽取的样本编号是完全不一样的，是独立随机的。最后得到了干净的二维张量(总样本数, 特征维度)
             observations = torch.gather(self.observations, 1, obs_indices).reshape(
                 self.n_env * batch_size, self.n_obs
             )
@@ -153,7 +158,7 @@ class SimpleReplayBuffer(nn.Module):
             effective_n_steps = torch.ones_like(dones)
             if self.asymmetric_obs:
                 if self.playground_mode:
-                    # Gather privileged observations
+                    # 收集特权观察
                     priv_obs_indices = indices.unsqueeze(-1).expand(
                         -1, -1, self.privileged_obs_size
                     )
@@ -164,7 +169,7 @@ class SimpleReplayBuffer(nn.Module):
                         self.next_privileged_observations, 1, priv_obs_indices
                     ).reshape(self.n_env * batch_size, self.privileged_obs_size)
 
-                    # Concatenate with regular observations to form full critic observations
+                    # 与常规观察连接以形成完整的评论观察
                     critic_observations = torch.cat(
                         [observations, privileged_observations], dim=1
                     )
@@ -172,7 +177,7 @@ class SimpleReplayBuffer(nn.Module):
                         [next_observations, next_privileged_observations], dim=1
                     )
                 else:
-                    # Gather full critic observations
+                    # 收集完整的评论意见
                     critic_obs_indices = indices.unsqueeze(-1).expand(
                         -1, -1, self.n_critic_obs
                     )
@@ -182,13 +187,15 @@ class SimpleReplayBuffer(nn.Module):
                     next_critic_observations = torch.gather(
                         self.next_critic_observations, 1, critic_obs_indices
                     ).reshape(self.n_env * batch_size, self.n_critic_obs)
+
+        ##NOTE - n_steps > 1 时: 我们使用 N-step TD learning。
         else:
-            # Sample base indices
+            # 样本基索引
             if self.ptr >= self.buffer_size:
-                # When the buffer is full, there is no protection against sampling across different episodes
-                # We avoid this by temporarily setting self.pos - 1 to truncated = True if not done
+                # 当缓冲区已满时，无法防止跨不同 episodes 的采样
+                # 我们通过暂时将 self.pos - 1 设置为 truncated = True 来避免这种情况（如果未完成）
                 # https://github.com/DLR-RM/stable-baselines3/blob/b91050ca94f8bce7a0285c91f85da518d5a26223/stable_baselines3/common/buffers.py#L857-L860
-                # TODO (Younggyo): Change the reference when this SB3 branch is merged
+                # TODO (Younggyo)：当此 SB3 分支合并后更改引用
                 current_pos = self.ptr % self.buffer_size
                 curr_truncations = self.truncations[:, current_pos - 1].clone()
                 self.truncations[:, current_pos - 1] = torch.logical_not(
@@ -201,7 +208,7 @@ class SimpleReplayBuffer(nn.Module):
                     device=self.device,
                 )
             else:
-                # Buffer not full - ensure n-step sequence doesn't exceed valid data
+                # 缓冲区未满 - 确保 n 步序列不超过有效数据
                 max_start_idx = max(1, self.ptr - self.n_steps + 1)
                 indices = torch.randint(
                     0,
@@ -212,7 +219,7 @@ class SimpleReplayBuffer(nn.Module):
             obs_indices = indices.unsqueeze(-1).expand(-1, -1, self.n_obs)
             act_indices = indices.unsqueeze(-1).expand(-1, -1, self.n_act)
 
-            # Get base transitions
+            # 获取基本过渡
             observations = torch.gather(self.observations, 1, obs_indices).reshape(
                 self.n_env * batch_size, self.n_obs
             )
@@ -221,7 +228,7 @@ class SimpleReplayBuffer(nn.Module):
             )
             if self.asymmetric_obs:
                 if self.playground_mode:
-                    # Gather privileged observations
+                    # 收集特权观察
                     priv_obs_indices = indices.unsqueeze(-1).expand(
                         -1, -1, self.privileged_obs_size
                     )
@@ -229,12 +236,12 @@ class SimpleReplayBuffer(nn.Module):
                         self.privileged_observations, 1, priv_obs_indices
                     ).reshape(self.n_env * batch_size, self.privileged_obs_size)
 
-                    # Concatenate with regular observations to form full critic observations
+                    # 与常规观察连接以形成完整的评论观察
                     critic_observations = torch.cat(
                         [observations, privileged_observations], dim=1
                     )
                 else:
-                    # Gather full critic observations
+                    # 收集完整的评论意见
                     critic_obs_indices = indices.unsqueeze(-1).expand(
                         -1, -1, self.n_critic_obs
                     )
@@ -242,15 +249,15 @@ class SimpleReplayBuffer(nn.Module):
                         self.critic_observations, 1, critic_obs_indices
                     ).reshape(self.n_env * batch_size, self.n_critic_obs)
 
-            # Create sequential indices for each sample
-            # This creates a [n_env, batch_size, n_step] tensor of indices
+            # 为每个样本创建顺序索引
+            # 这将创建一个 [n_env, batch_size, n_step] 的索引张量
             seq_offsets = torch.arange(self.n_steps, device=self.device).view(1, 1, -1)
             all_indices = (
                 indices.unsqueeze(-1) + seq_offsets
-            ) % self.buffer_size  # [n_env, batch_size, n_step]
+            ) % self.buffer_size  # [环境数量, 批量大小, 步数]
 
-            # Gather all rewards and terminal flags
-            # Using advanced indexing - result shapes: [n_env, batch_size, n_step]
+            # 收集所有奖励和终端标志
+            # 使用高级索引 - 结果形状：[n_env, batch_size, n_step]
             all_rewards = torch.gather(
                 self.rewards.unsqueeze(-1).expand(-1, -1, self.n_steps), 1, all_indices
             )
@@ -263,59 +270,57 @@ class SimpleReplayBuffer(nn.Module):
                 all_indices,
             )
 
-            # Create masks for rewards *after* first done
-            # This creates a cumulative product that zeroes out rewards after the first done
+            # 在第一次完成后创建奖励掩码
+            # 这会创建一个累积乘积，在第一次完成后将奖励归零
             all_dones_shifted = torch.cat(
                 [torch.zeros_like(all_dones[:, :, :1]), all_dones[:, :, :-1]], dim=2
-            )  # First reward should not be masked
+            )  # 第一个奖励不应被屏蔽
             done_masks = torch.cumprod(
                 1.0 - all_dones_shifted, dim=2
-            )  # [n_env, batch_size, n_step]
+            )  # [环境数量, 批量大小, 步数]
             effective_n_steps = done_masks.sum(2)
 
-            # Create discount factors
+            # 创建折扣因子
             discounts = torch.pow(
                 self.gamma, torch.arange(self.n_steps, device=self.device)
-            )  # [n_steps]
+            )  # [步骤 n]
 
-            # Apply masks and discounts to rewards
-            masked_rewards = all_rewards * done_masks  # [n_env, batch_size, n_step]
+            # 应用掩码和折扣到奖励
+            masked_rewards = all_rewards * done_masks  # [环境数量, 批量大小, 步数]
             discounted_rewards = masked_rewards * discounts.view(
                 1, 1, -1
-            )  # [n_env, batch_size, n_step]
+            )  # [环境数量, 批量大小, 步数]
 
-            # Sum rewards along the n_step dimension
-            n_step_rewards = discounted_rewards.sum(dim=2)  # [n_env, batch_size]
+            # 沿着 n_step 维度累加奖励
+            n_step_rewards = discounted_rewards.sum(dim=2)  # [n_env，batch_size]
 
-            # Find index of first done or truncation or last step for each sequence
+            # 找到每个序列的第一个完成、截断或最后一步的索引
             first_done = torch.argmax(
                 (all_dones > 0).float(), dim=2
-            )  # [n_env, batch_size]
+            )  # [n_env，batch_size]
             first_trunc = torch.argmax(
                 (all_truncations > 0).float(), dim=2
-            )  # [n_env, batch_size]
+            )  # [n_env，batch_size]
 
-            # Handle case where there are no dones or truncations
+            # 处理没有完成或截断的情况
             no_dones = all_dones.sum(dim=2) == 0
             no_truncs = all_truncations.sum(dim=2) == 0
 
-            # When no dones or truncs, use the last index
+            # 当没有完成或截断时，使用最后一个索引
             first_done = torch.where(no_dones, self.n_steps - 1, first_done)
             first_trunc = torch.where(no_truncs, self.n_steps - 1, first_trunc)
 
-            # Take the minimum (first) of done or truncation
+            # 取完成或截断中的最小值（第一个）
             final_indices = torch.minimum(
                 first_done, first_trunc
-            )  # [n_env, batch_size]
+            )  # [n_env，batch_size]
 
-            # Create indices to gather the final next observations
+            # 创建索引以收集最终的下一个观察值
             final_next_obs_indices = torch.gather(
                 all_indices, 2, final_indices.unsqueeze(-1)
-            ).squeeze(
-                -1
-            )  # [n_env, batch_size]
+            ).squeeze(-1)  # [n_env，batch_size]
 
-            # Gather final values
+            # 收集最终值
             final_next_observations = self.next_observations.gather(
                 1, final_next_obs_indices.unsqueeze(-1).expand(-1, -1, self.n_obs)
             )
@@ -324,7 +329,7 @@ class SimpleReplayBuffer(nn.Module):
 
             if self.asymmetric_obs:
                 if self.playground_mode:
-                    # Gather final privileged observations
+                    # 收集最终的特权观察
                     final_next_privileged_observations = (
                         self.next_privileged_observations.gather(
                             1,
@@ -334,14 +339,14 @@ class SimpleReplayBuffer(nn.Module):
                         )
                     )
 
-                    # Reshape for output
+                    # 为输出调整形状
                     next_privileged_observations = (
                         final_next_privileged_observations.reshape(
                             self.n_env * batch_size, self.privileged_obs_size
                         )
                     )
 
-                    # Concatenate with next observations to form full next critic observations
+                    # 与下一个观察值连接以形成完整的下一个评论观察值
                     next_observations_reshaped = final_next_observations.reshape(
                         self.n_env * batch_size, self.n_obs
                     )
@@ -350,7 +355,7 @@ class SimpleReplayBuffer(nn.Module):
                         dim=1,
                     )
                 else:
-                    # Gather final next critic observations directly
+                    # 直接收集最终下一步评论意见
                     final_next_critic_observations = (
                         self.next_critic_observations.gather(
                             1,
@@ -363,7 +368,7 @@ class SimpleReplayBuffer(nn.Module):
                         self.n_env * batch_size, self.n_critic_obs
                     )
 
-            # Reshape everything to batch dimension
+            # 将所有内容重塑为批量维度
             rewards = n_step_rewards.reshape(self.n_env * batch_size)
             dones = final_dones.reshape(self.n_env * batch_size)
             truncations = final_truncations.reshape(self.n_env * batch_size)
@@ -391,27 +396,28 @@ class SimpleReplayBuffer(nn.Module):
             out["next"]["critic_observations"] = next_critic_observations
 
         if self.n_steps > 1 and self.ptr >= self.buffer_size:
-            # Roll back the truncation flags introduced for safe sampling
+            # 回滚为安全采样引入的截断标志
             self.truncations[:, current_pos - 1] = curr_truncations
         return out
 
 
 class EmpiricalNormalization(nn.Module):
-    """Normalize mean and variance of values based on empirical values."""
+    """根据经验值对均值和方差进行归一化。"""
 
     def __init__(self, shape, device, eps=1e-2, until=None):
-        """Initialize EmpiricalNormalization module.
+        """初始化经验归一化模块。
 
-        Args:
-            shape (int or tuple of int): Shape of input values except batch axis.
-            eps (float): Small value for stability.
-            until (int or None): If this arg is specified, the link learns input values until the sum of batch sizes
-            exceeds it.
+        参数：
+        - shape (int 或 int 元组): 除批处理轴外的输入值形状。
+        - eps (float): 用于稳定性的微小值。
+        - until (int 或 None): 如果指定了此参数，则链接会学习输入值，直到批处理大小的总和超过该值。
         """
         super().__init__()
         self.eps = eps
         self.until = until
         self.device = device
+
+        ## register_buffer 用于注册持久性张量(不参与梯度计算），这些张量在模型保存和加载时会被保留。
         self.register_buffer("_mean", torch.zeros(shape).unsqueeze(0).to(device))
         self.register_buffer("_var", torch.ones(shape).unsqueeze(0).to(device))
         self.register_buffer("_std", torch.ones(shape).unsqueeze(0).to(device))
@@ -431,10 +437,15 @@ class EmpiricalNormalization(nn.Module):
                 f"Expected input of shape (*,{self._mean.shape[1:]}), got {x.shape}"
             )
 
+        ##NOTE - 只要网络是训练模式.train()，那么training属性就会为 True
         if self.training:
             self.update(x)
+
+        ##NOTE - 如果 center=True，则减去均值，用于状态归一化
         if center:
             return (x - self._mean) / (self._std + self.eps)
+
+        ##NOTE - 如果 center=False，则仅除以标准差，用于奖励归一化，因为减去均值会改变奖励的正负
         else:
             return x / (self._std + self.eps)
 
@@ -446,10 +457,10 @@ class EmpiricalNormalization(nn.Module):
         batch_size = x.shape[0]
         batch_mean = torch.mean(x, dim=0, keepdim=True)
 
-        # Update count
+        # 更新计数
         new_count = self.count + batch_size
 
-        # Update mean
+        # 更新均值
         delta = batch_mean - self._mean
         self._mean += (batch_size / new_count) * delta
 
@@ -463,7 +474,7 @@ class EmpiricalNormalization(nn.Module):
             M2 = m_a + m_b + (delta2**2) * (self.count * batch_size / new_count)
             self._var = M2 / new_count
         else:
-            # For first batch, just use batch variance
+            # 对于第一批，只需使用批量方差
             self._var = torch.mean((x - self._mean) ** 2, dim=0, keepdim=True)
 
         self._std = torch.sqrt(self._var)
@@ -483,10 +494,8 @@ class RewardNormalizer(nn.Module):
         epsilon: float = 1e-8,
     ):
         super().__init__()
-        self.register_buffer(
-            "G", torch.zeros(1, device=device)
-        )  # running estimate of the discounted return
-        self.register_buffer("G_r_max", torch.zeros(1, device=device))  # running-max
+        self.register_buffer("G", torch.zeros(1, device=device))  # 折扣回报的运行估算
+        self.register_buffer("G_r_max", torch.zeros(1, device=device))  # 运行最大值
         self.G_rms = EmpiricalNormalization(shape=1, device=device)
         self.gamma = gamma
         self.g_max = g_max
@@ -542,7 +551,8 @@ class PerTaskEmpiricalNormalization(nn.Module):
         self.until = until
         self.device = device
 
-        # Buffers now have a leading dimension for tasks
+
+        # 缓冲区现在具有用于任务的前导维度
         self.register_buffer("_mean", torch.zeros(num_tasks, *shape).to(device))
         self.register_buffer("_var", torch.ones(num_tasks, *shape).to(device))
         self.register_buffer("_std", torch.ones(num_tasks, *shape).to(device))
@@ -566,8 +576,10 @@ class PerTaskEmpiricalNormalization(nn.Module):
         if x.shape[0] != task_ids.shape[0]:
             raise ValueError("Batch size of x and task_ids must match.")
 
-        # Gather the stats for the tasks in the current batch
-        # Reshape task_ids for broadcasting: [num_envs] -> [num_envs, 1, ...]
+
+        # 收集当前批次任务的统计数据
+        # 调整 task_ids 以进行广播：[num_envs] -> [num_envs, 1, ...]
+
         view_shape = (task_ids.shape[0],) + (1,) * len(self.shape)
         task_ids_expanded = task_ids.view(view_shape).expand_as(x)
 
@@ -591,7 +603,9 @@ class PerTaskEmpiricalNormalization(nn.Module):
             if self.until is not None and self.count[task_id] >= self.until:
                 continue
 
-            # Create a mask to select data for the current task
+
+            # 为当前任务创建一个掩码以选择数据
+
             mask = task_ids == task_id
             x_task = x[mask]
             batch_size = x_task.shape[0]
@@ -599,17 +613,21 @@ class PerTaskEmpiricalNormalization(nn.Module):
             if batch_size == 0:
                 continue
 
-            # Update count for this task
+
+            # 更新此任务的计数
             old_count = self.count[task_id].clone()
             new_count = old_count + batch_size
 
-            # Update mean
+            # 更新均值
+
             task_mean = self._mean[task_id]
             batch_mean = torch.mean(x_task, dim=0)
             delta = batch_mean - task_mean
             self._mean[task_id] = task_mean + (batch_size / new_count) * delta
 
-            # Update variance using Chan's parallel algorithm
+
+            # 使用Chan的并行算法更新方差
+
             if old_count > 0:
                 batch_var = torch.var(x_task, dim=0, unbiased=False)
                 m_a = self._var[task_id] * old_count
@@ -617,7 +635,9 @@ class PerTaskEmpiricalNormalization(nn.Module):
                 M2 = m_a + m_b + (delta**2) * (old_count * batch_size / new_count)
                 self._var[task_id] = M2 / new_count
             else:
-                # For the first batch of this task
+
+                # 对于此任务的第一批
+
                 self._var[task_id] = torch.var(x_task, dim=0, unbiased=False)
 
             self._std[task_id] = torch.sqrt(self._var[task_id])
