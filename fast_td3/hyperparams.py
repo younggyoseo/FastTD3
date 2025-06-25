@@ -297,7 +297,7 @@ class MTBenchArgs(BaseArgs):
     buffer_size: int = 2048  # 2K is usually enough for MTBench
     num_envs: int = 4096
     num_eval_envs: int = 4096
-    gamma: float = 0.99
+    gamma: float = 0.97
     num_steps: int = 8
 
 
@@ -308,6 +308,7 @@ class MetaWorldMT10Args(MTBenchArgs):
     num_envs: int = 4096
     num_eval_envs: int = 4096
     num_steps: int = 8
+    gamma: float = 0.97
 
 
 @dataclass
@@ -318,6 +319,7 @@ class MetaWorldMT50Args(MTBenchArgs):
     num_envs: int = 8192
     num_eval_envs: int = 8192
     num_steps: int = 8
+    gamma: float = 0.99
 
 
 @dataclass

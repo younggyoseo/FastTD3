@@ -221,6 +221,7 @@ def main():
             from fast_td3_simbav2 import Actor, Critic
 
             actor_cls = Actor
+            critic_cls = Critic
 
         print("Using FastTD3 + SimbaV2")
         actor_kwargs.pop("init_scale")
