@@ -1,4 +1,7 @@
 models
+fast_td3/TD3.py
+fast_td3/TDDR.py
+*tddr.*
 wandb
 *.pyc
 .ipynb_checkpoints

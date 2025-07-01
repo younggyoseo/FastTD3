@@ -1,0 +1,14 @@
+python fast_td3/train.py \
+    --env_name G1JoystickFlatTerrain \
+    --exp_name FastTD3 \
+    --render_interval 5000 \
+    --agent fasttd3_simbav2 \
+    --batch_size 8192 \
+    --critic_learning_rate_end 3e-5 \
+    --actor_learning_rate_end 3e-5 \
+    --weight_decay 0.0 \
+    --critic_hidden_dim 512 \
+    --critic_num_blocks 2 \
+    --actor_hidden_dim 256 \
+    --actor_num_blocks 1 \
+    --seed 1
