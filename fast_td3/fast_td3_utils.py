@@ -85,6 +85,7 @@ class SimpleReplayBuffer(nn.Module):
                 )
         self.ptr = 0
 
+    @torch.no_grad()
     def extend(
         self,
         tensor_dict: TensorDict,
@@ -119,6 +120,7 @@ class SimpleReplayBuffer(nn.Module):
                 self.next_critic_observations[:, ptr] = next_critic_observations
         self.ptr += 1
 
+    @torch.no_grad()
     def sample(self, batch_size: int):
         # we will sample n_env * batch_size transitions
 
@@ -425,6 +427,7 @@ class EmpiricalNormalization(nn.Module):
     def std(self):
         return self._std.squeeze(0).clone()
 
+    @torch.no_grad()
     def forward(self, x: torch.Tensor, center: bool = True) -> torch.Tensor:
         if x.shape[1:] != self._mean.shape[1:]:
             raise ValueError(
@@ -453,21 +456,19 @@ class EmpiricalNormalization(nn.Module):
         delta = batch_mean - self._mean
         self._mean += (batch_size / new_count) * delta
 
-        # Update variance using Chan's parallel algorithm
-        # https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
-        if self.count > 0:  # Ensure we're not dividing by zero
-            batch_var = torch.mean((x - batch_mean) ** 2, dim=0, keepdim=True)
-            delta2 = batch_mean - self._mean
-            m_a = self._var * self.count
-            m_b = batch_var * batch_size
-            M2 = m_a + m_b + (delta2**2) * (self.count * batch_size / new_count)
-            self._var = M2 / new_count
-        else:
-            # For first batch, just use batch variance
-            self._var = torch.mean((x - self._mean) ** 2, dim=0, keepdim=True)
+        # Compute batch variance
+        batch_var = torch.mean((x - batch_mean) ** 2, dim=0, keepdim=True)
+        delta2 = batch_mean - self._mean  # uses updated mean
 
-        self._std = torch.sqrt(self._var)
-        self.count = new_count
+        # Parallel variance update (works even when previous count == 0)
+        m_a = self._var * self.count  # previous aggregated M2
+        m_b = batch_var * batch_size
+        M2 = m_a + m_b + delta2.pow(2) * (self.count * batch_size / new_count)
+        self._var.copy_(M2 / new_count)
+
+        # Update std and count in-place to avoid expensive __setattr__
+        self._std.copy_(self._var.sqrt())
+        self.count.copy_(new_count)
 
     @torch.jit.unused
     def inverse(self, y):

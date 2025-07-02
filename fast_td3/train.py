@@ -49,6 +49,12 @@ except ImportError:
     pass
 
 
+@torch.no_grad()
+def mark_step():
+    # call this once per iteration *before* any compiled function
+    torch.compiler.cudagraph_mark_step_begin()
+
+
 def main():
     args = get_args()
     print(args)
@@ -221,6 +227,7 @@ def main():
             from fast_td3_simbav2 import Actor, Critic
 
             actor_cls = Actor
+            critic_cls = Critic
 
         print("Using FastTD3 + SimbaV2")
         actor_kwargs.pop("init_scale")
@@ -457,10 +464,13 @@ def main():
         scaler.scale(qf_loss).backward()
         scaler.unscale_(q_optimizer)
 
-        critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-            qnet.parameters(),
-            max_norm=args.max_grad_norm if args.max_grad_norm > 0 else float("inf"),
-        )
+        if args.use_grad_norm_clipping:
+            critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+                qnet.parameters(),
+                max_norm=args.max_grad_norm if args.max_grad_norm > 0 else float("inf"),
+            )
+        else:
+            critic_grad_norm = torch.tensor(0.0, device=device)
         scaler.step(q_optimizer)
         scaler.update()
         q_scheduler.step()
@@ -493,10 +503,13 @@ def main():
         actor_optimizer.zero_grad(set_to_none=True)
         scaler.scale(actor_loss).backward()
         scaler.unscale_(actor_optimizer)
-        actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-            actor.parameters(),
-            max_norm=args.max_grad_norm if args.max_grad_norm > 0 else float("inf"),
-        )
+        if args.use_grad_norm_clipping:
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                actor.parameters(),
+                max_norm=args.max_grad_norm if args.max_grad_norm > 0 else float("inf"),
+            )
+        else:
+            actor_grad_norm = torch.tensor(0.0, device=device)
         scaler.step(actor_optimizer)
         scaler.update()
         actor_scheduler.step()
@@ -504,16 +517,28 @@ def main():
         logs_dict["actor_loss"] = actor_loss.detach()
         return logs_dict
 
+    @torch.no_grad()
+    def soft_update(src, tgt, tau: float):
+        src_ps = [p.data for p in src.parameters()]
+        tgt_ps = [p.data for p in tgt.parameters()]
+
+        torch._foreach_mul_(tgt_ps, 1.0 - tau)
+        torch._foreach_add_(tgt_ps, src_ps, alpha=tau)
+
     if args.compile:
-        mode = None
-        update_main = torch.compile(update_main, mode=mode)
-        update_pol = torch.compile(update_pol, mode=mode)
-        policy = torch.compile(policy, mode=mode)
-        normalize_obs = torch.compile(obs_normalizer.forward, mode=mode)
-        normalize_critic_obs = torch.compile(critic_obs_normalizer.forward, mode=mode)
+        compile_mode = args.compile_mode
+        update_main = torch.compile(update_main, mode=compile_mode)
+        update_pol = torch.compile(update_pol, mode=compile_mode)
+        policy = torch.compile(policy, mode=compile_mode)
+        normalize_obs = torch.compile(obs_normalizer.forward, mode=compile_mode)
+        normalize_critic_obs = torch.compile(
+            critic_obs_normalizer.forward, mode=compile_mode
+        )
         if args.reward_normalization:
-            update_stats = torch.compile(reward_normalizer.update_stats, mode=mode)
-        normalize_reward = torch.compile(reward_normalizer.forward, mode=mode)
+            update_stats = torch.compile(
+                reward_normalizer.update_stats, mode=compile_mode
+            )
+        normalize_reward = torch.compile(reward_normalizer.forward, mode=compile_mode)
     else:
         normalize_obs = obs_normalizer.forward
         normalize_critic_obs = critic_obs_normalizer.forward
@@ -548,6 +573,7 @@ def main():
     desc = ""
 
     while global_step < args.total_timesteps:
+        mark_step()
         logs_dict = TensorDict()
         if (
             start_time is None
@@ -575,7 +601,6 @@ def main():
 
         if envs.asymmetric_obs:
             next_critic_obs = infos["observations"]["critic"]
-
         # Compute 'true' next_obs and next_critic_obs for saving
         true_next_obs = torch.where(
             dones[:, None] > 0, infos["observations"]["raw"]["obs"], next_obs
@@ -586,6 +611,7 @@ def main():
                 infos["observations"]["raw"]["critic_obs"],
                 next_critic_obs,
             )
+
         transition = TensorDict(
             {
                 "observations": obs,
@@ -605,12 +631,11 @@ def main():
         if envs.asymmetric_obs:
             transition["critic_observations"] = critic_obs
             transition["next"]["critic_observations"] = true_next_critic_obs
+        rb.extend(transition)
 
         obs = next_obs
         if envs.asymmetric_obs:
             critic_obs = next_critic_obs
-
-        rb.extend(transition)
 
         batch_size = args.batch_size // args.num_envs
         if global_step > args.learning_starts:
@@ -620,6 +645,13 @@ def main():
                 data["next"]["observations"] = normalize_obs(
                     data["next"]["observations"]
                 )
+                if envs.asymmetric_obs:
+                    data["critic_observations"] = normalize_critic_obs(
+                        data["critic_observations"]
+                    )
+                    data["next"]["critic_observations"] = normalize_critic_obs(
+                        data["next"]["critic_observations"]
+                    )
                 raw_rewards = data["next"]["rewards"]
                 if env_type in ["mtbench"] and args.reward_normalization:
                     # Multi-task reward normalization
@@ -630,13 +662,7 @@ def main():
                     )
                 else:
                     data["next"]["rewards"] = normalize_reward(raw_rewards)
-                if envs.asymmetric_obs:
-                    data["critic_observations"] = normalize_critic_obs(
-                        data["critic_observations"]
-                    )
-                    data["next"]["critic_observations"] = normalize_critic_obs(
-                        data["next"]["critic_observations"]
-                    )
+
                 logs_dict = update_main(data, logs_dict)
                 if args.num_updates > 1:
                     if i % args.policy_frequency == 1:
@@ -645,12 +671,7 @@ def main():
                     if global_step % args.policy_frequency == 0:
                         logs_dict = update_pol(data, logs_dict)
 
-                for param, target_param in zip(
-                    qnet.parameters(), qnet_target.parameters()
-                ):
-                    target_param.data.copy_(
-                        args.tau * param.data + (1 - args.tau) * target_param.data
-                    )
+                soft_update(qnet, qnet_target, args.tau)
 
             if global_step % 100 == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)

@@ -10,7 +10,9 @@ For more information, please see our [project webpage](https://younggyo.me/fast_
 
 
 ## ❗ Updates
-- **[Jun/20/2025]** Added support for [MTBench](https://github.com/Viraj-Joshi/MTBench)
+- **[Jul/02/2025]** Optimized codebase to speed up training around 10-30% when using a single RTX 4090 GPU.
+
+- **[Jun/20/2025]** Added support for [MTBench](https://github.com/Viraj-Joshi/MTBench) with the help of [Viraj Joshi](https://viraj-joshi.github.io/).
 
 - **[Jun/15/2025]** Added support for FastTD3 + [SimbaV2](https://dojeon-ai.github.io/SimbaV2/)! It's faster to train, and often achieves better asymptotic performance. We recommend using FastTD3 + SimbaV2 for most cases.
 
@@ -218,9 +220,9 @@ python fast_td3/train.py \
     --critic_learning_rate_end 3e-5 \
     --actor_learning_rate_end 3e-5 \
     --weight_decay 0.0 \
-    --critic_hidden_dim 512 \
+    --critic_hidden_dim 1024 \
     --critic_num_blocks 2 \
-    --actor_hidden_dim 256 \
+    --actor_hidden_dim 512 \
     --actor_num_blocks 1 \
     --seed 1
 ```
@@ -237,6 +239,7 @@ We used a single Nvidia A100 80GB GPU for all experiments. Here are some remarks
   - If the agent is completely stuck or much worse than your expectation, try using `num_steps=3` or disabling `use_cdq`.
   - For tasks that have penalty reward terms (e.g., torques, energy, action_rate, ..), consider lowering them for initial experiments, and tune the values. In some cases, curriculum learning with lower penalty terms followed by fine-tuning with stronger terms is effective.
 - When you encounter out-of-memory error with your GPU, our recommendation for reducing GPU usage is (i) smaller `buffer_size`, (ii) smaller `batch_size`, and then (iii) smaller `num_envs`. Because our codebase is assigning the whole replay buffer in GPU to reduce CPU-GPU transfer bottleneck, it usually has the largest GPU consumption, but usually less harmful to reduce.
+- Consider using `--compile_mode max-autotune` if you plan to run for many training steps. This may speed up training by up to 10% at the cost of a few additional minutes of heavy compilation.
 
 ## 🛝 Playing with the FastTD3 training
 

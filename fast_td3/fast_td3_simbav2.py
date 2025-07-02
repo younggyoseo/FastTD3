@@ -486,7 +486,9 @@ class Actor(nn.Module):
 
             # Update only the noise scales for environments that are done
             dones_view = dones.view(-1, 1) > 0
-            self.noise_scales = torch.where(dones_view, new_scales, self.noise_scales)
+            self.noise_scales.copy_(
+                torch.where(dones_view, new_scales, self.noise_scales)
+            )
 
         act = self(obs)
         if deterministic:

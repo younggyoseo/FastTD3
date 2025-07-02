@@ -92,10 +92,14 @@ class BaseArgs:
     """the interval to render the model"""
     compile: bool = True
     """whether to use torch.compile."""
+    compile_mode: str = "reduce-overhead"
+    """the mode of torch.compile."""
     obs_normalization: bool = True
     """whether to enable observation normalization"""
     reward_normalization: bool = False
     """whether to enable reward normalization"""
+    use_grad_norm_clipping: bool = False
+    """whether to use gradient norm clipping."""
     max_grad_norm: float = 0.0
     """the maximum gradient norm"""
     amp: bool = True
@@ -297,7 +301,7 @@ class MTBenchArgs(BaseArgs):
     buffer_size: int = 2048  # 2K is usually enough for MTBench
     num_envs: int = 4096
     num_eval_envs: int = 4096
-    gamma: float = 0.99
+    gamma: float = 0.97
     num_steps: int = 8
 
 
@@ -308,6 +312,7 @@ class MetaWorldMT10Args(MTBenchArgs):
     num_envs: int = 4096
     num_eval_envs: int = 4096
     num_steps: int = 8
+    gamma: float = 0.97
 
 
 @dataclass
@@ -318,6 +323,7 @@ class MetaWorldMT50Args(MTBenchArgs):
     num_envs: int = 8192
     num_eval_envs: int = 8192
     num_steps: int = 8
+    gamma: float = 0.99
 
 
 @dataclass
