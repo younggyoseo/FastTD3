@@ -10,6 +10,7 @@ For more information, please see our [project webpage](https://younggyo.me/fast_
 
 
 ## ❗ Updates
+
 - **[Jul/02/2025]** Optimized codebase to speed up training around 10-30% when using a single RTX 4090 GPU.
 
 - **[Jun/20/2025]** Added support for [MTBench](https://github.com/Viraj-Joshi/MTBench) with the help of [Viraj Joshi](https://viraj-joshi.github.io/).
