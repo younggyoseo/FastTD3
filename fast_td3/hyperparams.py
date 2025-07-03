@@ -92,10 +92,14 @@ class BaseArgs:
     """the interval to render the model"""
     compile: bool = True
     """whether to use torch.compile."""
+    compile_mode: str = "reduce-overhead"
+    """the mode of torch.compile."""
     obs_normalization: bool = True
     """whether to enable observation normalization"""
     reward_normalization: bool = False
     """whether to enable reward normalization"""
+    use_grad_norm_clipping: bool = False
+    """whether to use gradient norm clipping."""
     max_grad_norm: float = 0.0
     """the maximum gradient norm"""
     amp: bool = True
