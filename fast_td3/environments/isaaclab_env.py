@@ -2,13 +2,6 @@ from typing import Optional
 
 import gymnasium as gym
 import torch
-from isaaclab.app import AppLauncher
-
-app_launcher = AppLauncher(headless=True)
-simulation_app = app_launcher.app
-
-import isaaclab_tasks
-from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
 
 class IsaacLabEnv:
@@ -22,6 +15,14 @@ class IsaacLabEnv:
         seed: int,
         action_bounds: Optional[float] = None,
     ):
+        from isaaclab.app import AppLauncher
+
+        app_launcher = AppLauncher(headless=True, device=device)
+        simulation_app = app_launcher.app
+
+        import isaaclab_tasks
+        from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
+
         env_cfg = parse_env_cfg(
             task_name,
             device=device,

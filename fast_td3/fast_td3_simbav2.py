@@ -510,6 +510,8 @@ class MultiTaskActor(Actor):
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        # TODO: Optimize the code to be compatible with cudagraphs
+        # Currently in-place creation of task_indices is not compatible with cudagraphs
         task_ids_one_hot = obs[..., -self.num_tasks :]
         task_indices = torch.argmax(task_ids_one_hot, dim=1)
         task_embeddings = self.task_embedding(task_indices)
@@ -527,6 +529,8 @@ class MultiTaskCritic(Critic):
         )
 
     def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        # TODO: Optimize the code to be compatible with cudagraphs
+        # Currently in-place creation of task_indices is not compatible with cudagraphs
         task_ids_one_hot = obs[..., -self.num_tasks :]
         task_indices = torch.argmax(task_ids_one_hot, dim=1)
         task_embeddings = self.task_embedding(task_indices)
