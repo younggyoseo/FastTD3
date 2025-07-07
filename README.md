@@ -11,6 +11,8 @@ For more information, please see our [project webpage](https://younggyo.me/fast_
 
 ## ❗ Updates
 
+- **[Jul/07/2025]** Added support for multi-GPU training! See [Multi-GPU Training](#multi-gpu-training) section for details. 
+
 - **[Jul/02/2025]** Optimized codebase to speed up training around 10-30% when using a single RTX 4090 GPU.
 
 - **[Jun/20/2025]** Added support for [MTBench](https://github.com/Viraj-Joshi/MTBench) with the help of [Viraj Joshi](https://viraj-joshi.github.io/).
@@ -241,6 +243,18 @@ We used a single Nvidia A100 80GB GPU for all experiments. Here are some remarks
   - For tasks that have penalty reward terms (e.g., torques, energy, action_rate, ..), consider lowering them for initial experiments, and tune the values. In some cases, curriculum learning with lower penalty terms followed by fine-tuning with stronger terms is effective.
 - When you encounter out-of-memory error with your GPU, our recommendation for reducing GPU usage is (i) smaller `buffer_size`, (ii) smaller `batch_size`, and then (iii) smaller `num_envs`. Because our codebase is assigning the whole replay buffer in GPU to reduce CPU-GPU transfer bottleneck, it usually has the largest GPU consumption, but usually less harmful to reduce.
 - Consider using `--compile_mode max-autotune` if you plan to run for many training steps. This may speed up training by up to 10% at the cost of a few additional minutes of heavy compilation.
+
+## Multi-GPU Training
+We support multi-GPU training. If your machine supports multiple GPUs, or specify multiple GPUs using `CUDA_VISIBLE_DEVICES`, and run `train_multigpu.py`, it will automatically use all GPUs to scale up training.
+
+**Important:** Our multi-GPU implementation launches the **same experiment independently on each GPU** rather than distributing parameters across GPUs. This means:
+- Effective number of environments: `num_envs × num_gpus`
+- Effective batch size: `batch_size × num_gpus` 
+- Effective buffer size: `buffer_size × num_gpus`
+
+Each GPU runs a complete copy of the training process, which scales up data collection and training throughput proportionally to the number of GPUs.
+
+For instance, running IsaacLab experiments with 4 GPUs and `num_envs=1024` will end up in similar results as experiments with 1 GPU with `num_envs=4096`.
 
 ## 🛝 Playing with the FastTD3 training
 

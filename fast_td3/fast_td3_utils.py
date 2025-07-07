@@ -4,6 +4,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 
 from tensordict import TensorDict
 
@@ -428,13 +429,15 @@ class EmpiricalNormalization(nn.Module):
         return self._std.squeeze(0).clone()
 
     @torch.no_grad()
-    def forward(self, x: torch.Tensor, center: bool = True) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, center: bool = True, update: bool = True
+    ) -> torch.Tensor:
         if x.shape[1:] != self._mean.shape[1:]:
             raise ValueError(
                 f"Expected input of shape (*,{self._mean.shape[1:]}), got {x.shape}"
             )
 
-        if self.training:
+        if self.training and update:
             self.update(x)
         if center:
             return (x - self._mean) / (self._std + self.eps)
@@ -446,27 +449,46 @@ class EmpiricalNormalization(nn.Module):
         if self.until is not None and self.count >= self.until:
             return
 
-        batch_size = x.shape[0]
-        batch_mean = torch.mean(x, dim=0, keepdim=True)
+        if dist.is_available() and dist.is_initialized():
+            # Calculate global batch size arithmetically
+            local_batch_size = x.shape[0]
+            world_size = dist.get_world_size()
+            global_batch_size = world_size * local_batch_size
 
-        # Update count
-        new_count = self.count + batch_size
+            # Calculate the stats
+            x_shifted = x - self._mean
+            local_sum_shifted = torch.sum(x_shifted, dim=0, keepdim=True)
+            local_sum_sq_shifted = torch.sum(x_shifted.pow(2), dim=0, keepdim=True)
+
+            # Sync the stats across all processes
+            stats_to_sync = torch.cat([local_sum_shifted, local_sum_sq_shifted], dim=0)
+            dist.all_reduce(stats_to_sync, op=dist.ReduceOp.SUM)
+            global_sum_shifted, global_sum_sq_shifted = stats_to_sync
+
+            # Calculate the mean and variance of the global batch
+            batch_mean_shifted = global_sum_shifted / global_batch_size
+            batch_var = (
+                global_sum_sq_shifted / global_batch_size - batch_mean_shifted.pow(2)
+            )
+            batch_mean = batch_mean_shifted + self._mean
+
+        else:
+            global_batch_size = x.shape[0]
+            batch_mean = torch.mean(x, dim=0, keepdim=True)
+            batch_var = torch.var(x, dim=0, keepdim=True, unbiased=False)
+
+        new_count = self.count + global_batch_size
 
         # Update mean
         delta = batch_mean - self._mean
-        self._mean += (batch_size / new_count) * delta
+        self._mean.copy_(self._mean + delta * (global_batch_size / new_count))
 
-        # Compute batch variance
-        batch_var = torch.mean((x - batch_mean) ** 2, dim=0, keepdim=True)
-        delta2 = batch_mean - self._mean  # uses updated mean
-
-        # Parallel variance update (works even when previous count == 0)
-        m_a = self._var * self.count  # previous aggregated M2
-        m_b = batch_var * batch_size
-        M2 = m_a + m_b + delta2.pow(2) * (self.count * batch_size / new_count)
+        # Update variance
+        delta2 = batch_mean - self._mean
+        m_a = self._var * self.count
+        m_b = batch_var * global_batch_size
+        M2 = m_a + m_b + delta2.pow(2) * (self.count * global_batch_size / new_count)
         self._var.copy_(M2 / new_count)
-
-        # Update std and count in-place to avoid expensive __setattr__
         self._std.copy_(self._var.sqrt())
         self.count.copy_(new_count)
 
@@ -507,7 +529,13 @@ class RewardNormalizer(nn.Module):
     ):
         self.G = self.gamma * (1 - dones) * self.G + rewards
         self.G_rms.update(self.G.view(-1, 1))
-        self.G_r_max = max(self.G_r_max, max(abs(self.G)))
+
+        local_max = torch.max(torch.abs(self.G))
+
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(local_max, op=dist.ReduceOp.MAX)
+
+        self.G_r_max = max(self.G_r_max, local_max)
 
     def forward(self, rewards: torch.Tensor) -> torch.Tensor:
         return self._scale_reward(rewards)
@@ -608,7 +636,7 @@ class PerTaskEmpiricalNormalization(nn.Module):
             task_mean = self._mean[task_id]
             batch_mean = torch.mean(x_task, dim=0)
             delta = batch_mean - task_mean
-            self._mean[task_id] = task_mean + (batch_size / new_count) * delta
+            self._mean[task_id].copy_(task_mean + (batch_size / new_count) * delta)
 
             # Update variance using Chan's parallel algorithm
             if old_count > 0:
@@ -616,13 +644,13 @@ class PerTaskEmpiricalNormalization(nn.Module):
                 m_a = self._var[task_id] * old_count
                 m_b = batch_var * batch_size
                 M2 = m_a + m_b + (delta**2) * (old_count * batch_size / new_count)
-                self._var[task_id] = M2 / new_count
+                self._var[task_id].copy_(M2 / new_count)
             else:
                 # For the first batch of this task
-                self._var[task_id] = torch.var(x_task, dim=0, unbiased=False)
+                self._var[task_id].copy_(torch.var(x_task, dim=0, unbiased=False))
 
-            self._std[task_id] = torch.sqrt(self._var[task_id])
-            self.count[task_id] = new_count
+            self._std[task_id].copy_(torch.sqrt(self._var[task_id]))
+            self.count[task_id].copy_(new_count)
 
 
 class PerTaskRewardNormalizer(nn.Module):
@@ -735,11 +763,18 @@ def save_params(
     save_path,
 ):
     """Save model parameters and training configuration to disk."""
+
+    def get_ddp_state_dict(model):
+        """Get state dict from model, handling DDP wrapper if present."""
+        if hasattr(model, "module"):
+            return model.module.state_dict()
+        return model.state_dict()
+
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     save_dict = {
-        "actor_state_dict": cpu_state(actor.state_dict()),
-        "qnet_state_dict": cpu_state(qnet.state_dict()),
-        "qnet_target_state_dict": cpu_state(qnet_target.state_dict()),
+        "actor_state_dict": cpu_state(get_ddp_state_dict(actor)),
+        "qnet_state_dict": cpu_state(get_ddp_state_dict(qnet)),
+        "qnet_target_state_dict": cpu_state(get_ddp_state_dict(qnet_target)),
         "obs_normalizer_state": (
             cpu_state(obs_normalizer.state_dict())
             if hasattr(obs_normalizer, "state_dict")
@@ -755,3 +790,24 @@ def save_params(
     }
     torch.save(save_dict, save_path, _use_new_zipfile_serialization=True)
     print(f"Saved parameters and configuration to {save_path}")
+
+
+def get_ddp_state_dict(model):
+    """Get state dict from model, handling DDP wrapper if present."""
+    if hasattr(model, "module"):
+        return model.module.state_dict()
+    return model.state_dict()
+
+
+def load_ddp_state_dict(model, state_dict):
+    """Load state dict into model, handling DDP wrapper if present."""
+    if hasattr(model, "module"):
+        model.module.load_state_dict(state_dict)
+    else:
+        model.load_state_dict(state_dict)
+
+
+@torch.no_grad()
+def mark_step():
+    # call this once per iteration *before* any compiled function
+    torch.compiler.cudagraph_mark_step_begin()
