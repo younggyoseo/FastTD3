@@ -4,10 +4,6 @@ from mujoco_playground import wrapper_torch
 import jax
 import mujoco
 
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-
 
 class PlaygroundEvalEnvWrapper:
     def __init__(self, eval_env, max_episode_steps, env_name, num_eval_envs, seed):
