@@ -303,6 +303,7 @@ class MTBenchArgs(BaseArgs):
     num_eval_envs: int = 4096
     gamma: float = 0.97
     num_steps: int = 8
+    compile_mode: str = "default"  # Multi-task training is not compatible with cudagraphs
 
 
 @dataclass
@@ -313,6 +314,7 @@ class MetaWorldMT10Args(MTBenchArgs):
     num_eval_envs: int = 4096
     num_steps: int = 8
     gamma: float = 0.97
+    compile_mode: str = "default"  # Multi-task training is not compatible with cudagraphs
 
 
 @dataclass
@@ -324,6 +326,7 @@ class MetaWorldMT50Args(MTBenchArgs):
     num_eval_envs: int = 8192
     num_steps: int = 8
     gamma: float = 0.99
+    compile_mode: str = "default"  # Multi-task training is not compatible with cudagraphs
 
 
 @dataclass
