@@ -11,6 +11,8 @@ For more information, please see our [project webpage](https://younggyo.me/fast_
 
 ## ❗ Updates
 
+- **[Aug/07/2025]** If you encounter an issue in reproducing the performance, try disabling `torch.compile`. Please use `--no_compile` in argument.
+
 - **[Jul/07/2025]** Added support for multi-GPU training! See [Multi-GPU Training](#multi-gpu-training) section for details. 
 
 - **[Jul/02/2025]** Optimized codebase to speed up training around 10-30% when using a single RTX 4090 GPU.
