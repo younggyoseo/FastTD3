@@ -292,10 +292,10 @@ We would like to thank people who have helped throughout the project:
 ### FastTD3
 ```bibtex
 @article{seo2025fasttd3,
-  title     = {FastTD3: Simple, Fast, and Capable Reinforcement Learning for Humanoid Control},
-  author    = {Seo, Younggyo and Sferrazza, Carmelo and Geng, Haoran and Nauman, Michal and Yin, Zhao-Heng and Abbeel, Pieter},
-  booktitle = {preprint},
-  year      = {2025},
+  title={FastTD3: Simple, Fast, and Capable Reinforcement Learning for Humanoid Control},
+  author={Seo, Younggyo and Sferrazza, Carmelo and Geng, Haoran and Nauman, Michal and Yin, Zhao-Heng and Abbeel, Pieter},
+  journal={arXiv preprint arXiv:2505.22642},
+  year={2025}
 }
 ```
 
