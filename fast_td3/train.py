@@ -180,6 +180,8 @@ def main():
         "device": device,
         "init_scale": args.init_scale,
         "hidden_dim": args.actor_hidden_dim,
+        "std_min": args.std_min,
+        "std_max": args.std_max,
     }
     critic_kwargs = {
         "n_obs": n_critic_obs,
