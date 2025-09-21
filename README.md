@@ -11,6 +11,8 @@ For more information, please see our [project webpage](https://younggyo.me/fast_
 
 ## ❗ Updates
 
+- **[Sep/20/2025]** Added `data` directory that contains training logs used for plotting in the report.
+
 - **[Sep/17/2025]** Fixed an issue where `std_min` and `std_max` were not included in Actor config (credit: [@ningyuanz](https://github.com/ningyuanz)).
 
 - **[Aug/07/2025]** If you encounter an issue in reproducing the performance, try disabling `torch.compile`. Please use `--no_compile` in argument.
