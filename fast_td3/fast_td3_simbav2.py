@@ -287,8 +287,9 @@ class DistributionalQNetwork(nn.Module):
         l = torch.floor(b).long()
         u = torch.ceil(b).long()
 
-        l_mask = torch.logical_and((u > 0), (l == u))
-        u_mask = torch.logical_and((l < (self.num_atoms - 1)), (l == u))
+        is_int = (l == u)
+        l_mask = is_int & (l > 0)
+        u_mask = is_int & (l == 0)
 
         l = torch.where(l_mask, l - 1, l)
         u = torch.where(u_mask, u + 1, u)
