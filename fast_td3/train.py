@@ -182,6 +182,9 @@ def main():
         "hidden_dim": args.actor_hidden_dim,
         "std_min": args.std_min,
         "std_max": args.std_max,
+        "sim_type": args.sim_type,
+        "sim_dimension": args.sim_dimension,
+        "seq_len": args.actor_seq_len,
     }
     critic_kwargs = {
         "n_obs": n_critic_obs,
@@ -190,6 +193,9 @@ def main():
         "v_min": args.v_min,
         "v_max": args.v_max,
         "hidden_dim": args.critic_hidden_dim,
+        "sim_type": args.sim_type,
+        "sim_dimension": args.sim_dimension,
+        "seq_len": args.critic_seq_len,
         "device": device,
     }
 
@@ -253,7 +259,7 @@ def main():
     else:
         raise ValueError(f"Agent {args.agent} not supported")
 
-    actor = actor_cls(**actor_kwargs)
+    actor = actor_cls(**actor_kwargs).to(device)
 
     if env_type in ["mtbench"]:
         # Python 3.8 doesn't support 'from_module' in tensordict
@@ -261,13 +267,13 @@ def main():
     else:
         from tensordict import from_module
 
-        actor_detach = actor_cls(**actor_kwargs)
+        actor_detach = actor_cls(**actor_kwargs).to(device)
         # Copy params to actor_detach without grad
         from_module(actor).data.to_module(actor_detach)
         policy = actor_detach.explore
 
-    qnet = critic_cls(**critic_kwargs)
-    qnet_target = critic_cls(**critic_kwargs)
+    qnet = critic_cls(**critic_kwargs).to(device)
+    qnet_target = critic_cls(**critic_kwargs).to(device)
     qnet_target.load_state_dict(qnet.state_dict())
 
     q_optimizer = optim.AdamW(
