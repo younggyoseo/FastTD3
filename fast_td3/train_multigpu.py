@@ -236,9 +236,27 @@ def main(rank: int, world_size: int):
             actor_cls = Actor
             critic_cls = Critic
 
+        actor_kwargs.update(
+            {
+                "sim_type": args.sim_type,
+                "sim_dimension": args.sim_dimension,
+                "seq_len": args.actor_seq_len,
+            }
+        )
+        critic_kwargs.update(
+            {
+                "sim_type": args.sim_type,
+                "sim_dimension": args.sim_dimension,
+                "seq_len": args.critic_seq_len,
+            }
+        )
+
         if rank == 0:
             print("Using FastTD3")
     elif args.agent == "fasttd3_simbav2":
+        if args.sim_type:
+            raise ValueError("SimNorm options are only supported with agent='fasttd3'")
+
         if env_type in ["mtbench"]:
             from fast_td3_simbav2 import MultiTaskActor, MultiTaskCritic
 

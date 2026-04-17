@@ -2,7 +2,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class SimNorm(nn.Module): 
+
+VALID_SIM_TYPES = {"", "sim_actor", "sim_critic", "sim_both"}
+
+
+def _validate_sim_config(sim_type: str, sim_dimension: int, seq_len: int) -> None:
+    if sim_type not in VALID_SIM_TYPES:
+        raise ValueError(
+            f"Unsupported sim_type '{sim_type}'. Expected one of {sorted(VALID_SIM_TYPES)}"
+        )
+    if sim_dimension <= 0:
+        raise ValueError("sim_dimension must be positive")
+    if seq_len <= 0:
+        raise ValueError("seq_len must be positive")
+
+
+class SimNorm(nn.Module):
     """
     Simplicial normalization.
     Adapted from https://arxiv.org/abs/2204.00616.
@@ -14,41 +29,31 @@ class SimNorm(nn.Module):
         self.dim = simnorm_dim
 
     def forward(self, x):
-        # import pdb
-        # pdb.set_trace()
         shp = x.shape
         x = x.view(*shp[:-1], self.L, self.dim)
         x = F.softmax(x, dim=-1)
         return x.view(*shp)
 
     def __repr__(self):
-        return f"Simplicial Embeddings(dim={self.dim})"
-    
-class NormedLinear(nn.Linear):
-    """
-    Linear layer with LayerNorm, activation, and optionally dropout.
-    """
+        return f"SimNorm(seq_len={self.L}, simnorm_dim={self.dim})"
 
-    def __init__(self, *args, dropout=0.0, act=nn.Mish(inplace=True), learnable_ln=True, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.ln = nn.LayerNorm(self.out_features, elementwise_affine=learnable_ln)
-        self.act = act
-        self.dropout = nn.Dropout(dropout, inplace=True) if dropout else None
 
-    def forward(self, x):
-        x = super().forward(x)
-        if self.dropout:
-            x = self.dropout(x)
-        return self.act(self.ln(x))
+class SimNormLinear(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        seq_len: int,
+        simnorm_dim: int,
+        device: torch.device = None,
+    ):
+        super().__init__()
+        out_features = seq_len * simnorm_dim
+        self.linear = nn.Linear(in_features, out_features, device=device)
+        self.norm = nn.LayerNorm(out_features, device=device)
+        self.simnorm = SimNorm(seq_len, simnorm_dim)
 
-    def __repr__(self):
-        repr_dropout = f", dropout={self.dropout.p}" if self.dropout else ""
-        return (
-            f"NormedLinear(in_features={self.in_features}, "
-            f"out_features={self.out_features}, "
-            f"bias={self.bias is not None}{repr_dropout}, "
-            f"act={self.act.__class__.__name__})"
-        )
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.simnorm(self.norm(self.linear(x)))
 
 class DistributionalQNetwork(nn.Module):
     def __init__(
@@ -65,26 +70,31 @@ class DistributionalQNetwork(nn.Module):
         device: torch.device = None,
     ):
         super().__init__()
+        _validate_sim_config(sim_type, sim_dimension, seq_len)
+
         self.net = nn.Sequential(
-            nn.Linear(n_obs + n_act, hidden_dim),
+            nn.Linear(n_obs + n_act, hidden_dim, device=device),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.Linear(hidden_dim, hidden_dim // 2, device=device),
             nn.ReLU(),
         )
 
-        if  sim_type in ["sim_both", "sim_critic"]:
-            self.act_fn=SimNorm(seq_len, sim_dimension)
+        if sim_type in ["sim_both", "sim_critic"]:
             self.fc_head = nn.Sequential(
-                                NormedLinear(hidden_dim // 2, seq_len*sim_dimension, act=self.act_fn),
-                                nn.Linear(seq_len*sim_dimension, num_atoms),
-                            )
+                SimNormLinear(
+                    hidden_dim // 2,
+                    seq_len=seq_len,
+                    simnorm_dim=sim_dimension,
+                    device=device,
+                ),
+                nn.Linear(seq_len * sim_dimension, num_atoms, device=device),
+            )
         else:
-            self.act_fn=None
-            self.fc_head =  nn.Sequential(
-                                nn.Linear(hidden_dim // 2, hidden_dim // 4),
-                                nn.ReLU(),
-                                nn.Linear(hidden_dim // 4, num_atoms),
-                            )
+            self.fc_head = nn.Sequential(
+                nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
+                nn.ReLU(),
+                nn.Linear(hidden_dim // 4, num_atoms, device=device),
+            )
 
         self.v_min = v_min
         self.v_max = v_max
@@ -118,8 +128,9 @@ class DistributionalQNetwork(nn.Module):
         l = torch.floor(b).long()
         u = torch.ceil(b).long()
 
-        l_mask = torch.logical_and((u > 0), (l == u))
-        u_mask = torch.logical_and((l < (self.num_atoms - 1)), (l == u))
+        is_int = l == u
+        l_mask = is_int & (l > 0)
+        u_mask = is_int & (l == 0)
 
         l = torch.where(l_mask, l - 1, l)
         u = torch.where(u_mask, u + 1, u)
@@ -241,40 +252,46 @@ class Actor(nn.Module):
         device: torch.device = None,
     ):
         super().__init__()
+        _validate_sim_config(sim_type, sim_dimension, seq_len)
+
         self.n_act = n_act
         self.net = nn.Sequential(
-            nn.Linear(n_obs, hidden_dim),
+            nn.Linear(n_obs, hidden_dim, device=device),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.Linear(hidden_dim, hidden_dim // 2, device=device),
             nn.ReLU(),
         )
 
         if sim_type in ["sim_both", "sim_actor"]:
-            self.act_fn = SimNorm(seq_len, sim_dimension)
-            self.fc_head = NormedLinear(hidden_dim // 2, seq_len*sim_dimension, act=self.act_fn)
+            self.fc_head = SimNormLinear(
+                hidden_dim // 2,
+                seq_len=seq_len,
+                simnorm_dim=sim_dimension,
+                device=device,
+            )
             self.fc_mu = nn.Sequential(
-                nn.Linear(seq_len*sim_dimension, n_act),
+                nn.Linear(seq_len * sim_dimension, n_act, device=device),
                 nn.Tanh(),
             )
         else:
-            self.fc_head =  nn.Sequential(
-                                nn.Linear(hidden_dim // 2, hidden_dim // 4),
-                                nn.ReLU(),
-                            )
+            self.fc_head = nn.Sequential(
+                nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
+                nn.ReLU(),
+            )
             self.fc_mu = nn.Sequential(
-                nn.Linear(hidden_dim // 4, n_act),
+                nn.Linear(hidden_dim // 4, n_act, device=device),
                 nn.Tanh(),
             )
         nn.init.normal_(self.fc_mu[0].weight, 0.0, init_scale)
         nn.init.constant_(self.fc_mu[0].bias, 0.0)
 
         noise_scales = (
-            torch.rand(num_envs, 1) * (std_max - std_min) + std_min
+            torch.rand(num_envs, 1, device=device) * (std_max - std_min) + std_min
         )
         self.register_buffer("noise_scales", noise_scales)
 
-        self.register_buffer("std_min", torch.as_tensor(std_min))
-        self.register_buffer("std_max", torch.as_tensor(std_max))
+        self.register_buffer("std_min", torch.as_tensor(std_min, device=device))
+        self.register_buffer("std_max", torch.as_tensor(std_max, device=device))
         self.n_envs = num_envs
         self.device = device
 
