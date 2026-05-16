@@ -3,6 +3,58 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+VALID_SIM_TYPES = {"", "sim_actor", "sim_critic", "sim_both"}
+
+
+def _validate_sim_config(sim_type: str, sim_dimension: int, seq_len: int) -> None:
+    if sim_type not in VALID_SIM_TYPES:
+        raise ValueError(
+            f"Unsupported sim_type '{sim_type}'. Expected one of {sorted(VALID_SIM_TYPES)}"
+        )
+    if sim_dimension <= 0:
+        raise ValueError("sim_dimension must be positive")
+    if seq_len <= 0:
+        raise ValueError("seq_len must be positive")
+
+
+class SimNorm(nn.Module):
+    """
+    Simplicial normalization.
+    Adapted from https://arxiv.org/abs/2204.00616.
+    """
+
+    def __init__(self, seq_len=8, simnorm_dim=8):
+        super().__init__()
+        self.L = seq_len
+        self.dim = simnorm_dim
+
+    def forward(self, x):
+        shp = x.shape
+        x = x.view(*shp[:-1], self.L, self.dim)
+        x = F.softmax(x, dim=-1)
+        return x.view(*shp)
+
+    def __repr__(self):
+        return f"SimNorm(seq_len={self.L}, simnorm_dim={self.dim})"
+
+
+class SimNormLinear(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        seq_len: int,
+        simnorm_dim: int,
+        device: torch.device = None,
+    ):
+        super().__init__()
+        out_features = seq_len * simnorm_dim
+        self.linear = nn.Linear(in_features, out_features, device=device)
+        self.norm = nn.LayerNorm(out_features, device=device)
+        self.simnorm = SimNorm(seq_len, simnorm_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.simnorm(self.norm(self.linear(x)))
+
 class DistributionalQNetwork(nn.Module):
     def __init__(
         self,
@@ -12,18 +64,38 @@ class DistributionalQNetwork(nn.Module):
         v_min: float,
         v_max: float,
         hidden_dim: int,
+        sim_type: str,
+        sim_dimension: int,
+        seq_len: int,
         device: torch.device = None,
     ):
         super().__init__()
+        _validate_sim_config(sim_type, sim_dimension, seq_len)
+
         self.net = nn.Sequential(
             nn.Linear(n_obs + n_act, hidden_dim, device=device),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim // 2, device=device),
             nn.ReLU(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 4, num_atoms, device=device),
         )
+
+        if sim_type in ["sim_both", "sim_critic"]:
+            self.fc_head = nn.Sequential(
+                SimNormLinear(
+                    hidden_dim // 2,
+                    seq_len=seq_len,
+                    simnorm_dim=sim_dimension,
+                    device=device,
+                ),
+                nn.Linear(seq_len * sim_dimension, num_atoms, device=device),
+            )
+        else:
+            self.fc_head = nn.Sequential(
+                nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
+                nn.ReLU(),
+                nn.Linear(hidden_dim // 4, num_atoms, device=device),
+            )
+
         self.v_min = v_min
         self.v_max = v_max
         self.num_atoms = num_atoms
@@ -31,6 +103,7 @@ class DistributionalQNetwork(nn.Module):
     def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         x = torch.cat([obs, actions], 1)
         x = self.net(x)
+        x = self.fc_head(x)
         return x
 
     def projection(
@@ -55,7 +128,7 @@ class DistributionalQNetwork(nn.Module):
         l = torch.floor(b).long()
         u = torch.ceil(b).long()
 
-        is_int = (l == u)
+        is_int = l == u
         l_mask = is_int & (l > 0)
         u_mask = is_int & (l == 0)
 
@@ -90,6 +163,9 @@ class Critic(nn.Module):
         v_min: float,
         v_max: float,
         hidden_dim: int,
+        sim_type: str,
+        sim_dimension: int,
+        seq_len: int,
         device: torch.device = None,
     ):
         super().__init__()
@@ -100,6 +176,9 @@ class Critic(nn.Module):
             v_min=v_min,
             v_max=v_max,
             hidden_dim=hidden_dim,
+            sim_type=sim_type,
+            sim_dimension=sim_dimension,
+            seq_len=seq_len,
             device=device,
         )
         self.qnet2 = DistributionalQNetwork(
@@ -109,6 +188,9 @@ class Critic(nn.Module):
             v_min=v_min,
             v_max=v_max,
             hidden_dim=hidden_dim,
+            sim_type=sim_type,
+            sim_dimension=sim_dimension,
+            seq_len=seq_len,
             device=device,
         )
 
@@ -164,22 +246,42 @@ class Actor(nn.Module):
         hidden_dim: int,
         std_min: float = 0.05,
         std_max: float = 0.8,
+        sim_type: str = "",
+        sim_dimension: int = 64,
+        seq_len: int=8,
         device: torch.device = None,
     ):
         super().__init__()
+        _validate_sim_config(sim_type, sim_dimension, seq_len)
+
         self.n_act = n_act
         self.net = nn.Sequential(
             nn.Linear(n_obs, hidden_dim, device=device),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim // 2, device=device),
             nn.ReLU(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
-            nn.ReLU(),
         )
-        self.fc_mu = nn.Sequential(
-            nn.Linear(hidden_dim // 4, n_act, device=device),
-            nn.Tanh(),
-        )
+
+        if sim_type in ["sim_both", "sim_actor"]:
+            self.fc_head = SimNormLinear(
+                hidden_dim // 2,
+                seq_len=seq_len,
+                simnorm_dim=sim_dimension,
+                device=device,
+            )
+            self.fc_mu = nn.Sequential(
+                nn.Linear(seq_len * sim_dimension, n_act, device=device),
+                nn.Tanh(),
+            )
+        else:
+            self.fc_head = nn.Sequential(
+                nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
+                nn.ReLU(),
+            )
+            self.fc_mu = nn.Sequential(
+                nn.Linear(hidden_dim // 4, n_act, device=device),
+                nn.Tanh(),
+            )
         nn.init.normal_(self.fc_mu[0].weight, 0.0, init_scale)
         nn.init.constant_(self.fc_mu[0].bias, 0.0)
 
@@ -195,8 +297,9 @@ class Actor(nn.Module):
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         x = obs
-        x = self.net(x)
-        action = self.fc_mu(x)
+        x_net = self.net(x)
+        x_head = self.fc_head(x_net)
+        action = self.fc_mu(x_head)
         return action
 
     def explore(

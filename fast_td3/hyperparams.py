@@ -125,6 +125,14 @@ class BaseArgs:
     save_interval: int = 5000
     """the interval to save the model"""
 
+    sim_type: str = ""
+    """SimNorm mode: '', sim_actor, sim_critic, or sim_both"""
+    sim_dimension: int = 64
+    """the dimension of the sim module"""
+    critic_seq_len: int = 8
+    """the number of simplices used in the critic head"""
+    actor_seq_len: int = 8
+    """the number of simplices used in the actor head"""
 
 def get_args():
     """
