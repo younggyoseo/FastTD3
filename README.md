@@ -11,6 +11,8 @@ For more information, please see our [project webpage](https://younggyo.me/fast_
 
 ## ❗ Updates
 
+- **[May/15/2026]** Added support for FastTD3 + [SEM](https://arxiv.org/abs/2510.13704v1). The codebase now supports Simplicial Embeddings (SimNorm) for FastTD3 actor and critic networks.
+
 - **[Sep/20/2025]** Added `data` directory that contains training logs used for plotting in the report.
 
 - **[Sep/17/2025]** Fixed an issue where `std_min` and `std_max` were not included in Actor config (credit: [@ningyuanz](https://github.com/ningyuanz)).
@@ -236,6 +238,24 @@ python fast_td3/train.py \
     --seed 1
 ```
 
+### FastTD3 + Simplicial Embeddings
+
+FastTD3 supports optional Simplicial Embeddings (SimNorm) for the actor, critic, or both networks. This option is available for `--agent fasttd3` and can be enabled with `--sim_type`.
+
+```bash
+python fast_td3/train.py \
+    --env_name h1hand-hurdle-v0 \
+    --exp_name FastTD3_SimNorm \
+    --render_interval 5000 \
+    --sim_type sim_both \
+    --sim_dimension 64 \
+    --actor_seq_len 8 \
+    --critic_seq_len 8 \
+    --seed 1
+```
+
+Supported `--sim_type` values are `sim_actor`, `sim_critic`, and `sim_both`.
+
 **Quick note:** For boolean-based arguments, you can set them to False by adding `no_` in front each argument, for instance, if you want to disable Clipped Q Learning, you can specify `--no_use_cdq` in your command.
 
 ## 💡 Performance-Related Tips
@@ -299,6 +319,16 @@ We would like to thank people who have helped throughout the project:
   title={FastTD3: Simple, Fast, and Capable Reinforcement Learning for Humanoid Control},
   author={Seo, Younggyo and Sferrazza, Carmelo and Geng, Haoran and Nauman, Michal and Yin, Zhao-Heng and Abbeel, Pieter},
   journal={arXiv preprint arXiv:2505.22642},
+  year={2025}
+}
+```
+
+### Simplicial Embeddings
+```bibtex
+@article{obando2025simplicial,
+  title={Simplicial embeddings improve sample efficiency in actor-critic agents},
+  author={Obando-Ceron, Johan and Mayor, Walter and Lavoie, Samuel and Fujimoto, Scott and Courville, Aaron and Castro, Pablo Samuel},
+  journal={arXiv preprint arXiv:2510.13704},
   year={2025}
 }
 ```
