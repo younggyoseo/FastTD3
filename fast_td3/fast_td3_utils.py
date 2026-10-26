@@ -483,11 +483,10 @@ class EmpiricalNormalization(nn.Module):
         delta = batch_mean - self._mean
         self._mean.copy_(self._mean + delta * (global_batch_size / new_count))
 
-        # Update variance
-        delta2 = batch_mean - self._mean
+        # Update variance (Chan et al. parallel update: uses the delta to the old mean)
         m_a = self._var * self.count
         m_b = batch_var * global_batch_size
-        M2 = m_a + m_b + delta2.pow(2) * (self.count * global_batch_size / new_count)
+        M2 = m_a + m_b + delta.pow(2) * (self.count * global_batch_size / new_count)
         self._var.copy_(M2 / new_count)
         self._std.copy_(self._var.sqrt())
         self.count.copy_(new_count)
